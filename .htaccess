@@ -1,0 +1,42 @@
+# ==============================================================================
+# ShopWise Kenya - Root Security & Redirection Rules
+# ==============================================================================
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # 1. Block access to protected non-public folders (403 Forbidden)
+    RewriteRule ^(app|database|cron|scripts|storage|vendor|_template_reference)(\/|$) - [F,L,NC]
+
+    # 2. Block access to hidden files and dotfiles (.git, .env, .htaccess, etc.)
+    RewriteRule (^|/)\.(?!well-known) - [F,L]
+
+    # 3. Route requests to public/ directory
+    RewriteCond %{REQUEST_URI} !^/public/ [NC]
+    RewriteCond %{REQUEST_URI} !^/[^/]+/public/ [NC]
+    RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>
+
+# Fallback file type protection
+<IfModule !mod_rewrite.c>
+    <FilesMatch "(?i)\.(env|sql|json|lock|log|md|sh|yml|yaml|ini)$">
+        <IfModule mod_authz_core.c>
+            Require all denied
+        </IfModule>
+        <IfModule !mod_authz_core.c>
+            Order Deny,Allow
+            Deny from all
+        </IfModule>
+    </FilesMatch>
+</IfModule>
+
+# Disable Directory Browsing
+Options -Indexes
+
+# Security Headers
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "DENY"
+    Header set X-XSS-Protection "1; mode=block"
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>

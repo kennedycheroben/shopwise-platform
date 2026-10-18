@@ -1,0 +1,20 @@
+# Local Environment Configuration
+app/config/config.local.php
+_template_reference/
+
+# Storage & Logs
+app/storage/logs/*.log
+!app/storage/logs/.gitkeep
+
+# Uploaded Media (Preserve upload directory and htaccess)
+public/uploads/products/*
+!public/uploads/products/.gitkeep
+!public/uploads/.htaccess
+
+# System & Editor Files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.bak

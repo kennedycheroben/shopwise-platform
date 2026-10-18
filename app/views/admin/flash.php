@@ -1,0 +1,1 @@
+<?php foreach (flash_all() as $type => $messages): foreach ((array)$messages as $message): ?><div class="alert alert-<?= e($type === 'error' ? 'danger' : $type) ?>"><?= e($message) ?></div><?php endforeach; endforeach; ?>
