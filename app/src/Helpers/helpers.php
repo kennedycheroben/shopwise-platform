@@ -71,6 +71,24 @@ function admin_url(string $path = ''): string
 }
 
 /**
+ * Generate URL for product images (supports both seeded assets and user uploads)
+ *
+ * @param string|null $path
+ * @param string $default
+ * @return string
+ */
+function product_image_url(?string $path, string $default = 'assets/img/product/product-1.webp'): string
+{
+    if (empty($path)) {
+        return asset($default);
+    }
+    if (str_starts_with($path, 'http://') || str_starts_with($path, 'https://')) {
+        return $path;
+    }
+    return asset(ltrim($path, '/'));
+}
+
+/**
  * CSRF Token Management
  */
 

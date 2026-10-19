@@ -351,6 +351,7 @@ CREATE TABLE `orders` (
   `latitude` DECIMAL(10,8) NULL,
   `longitude` DECIMAL(11,8) NULL,
   `customer_notes` TEXT NULL,
+  `stock_released` TINYINT(1) NOT NULL DEFAULT 0,
   `idempotency_token` VARCHAR(64) NOT NULL,
   `expires_at` DATETIME NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

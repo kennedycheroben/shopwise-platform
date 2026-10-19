@@ -1,14 +1,8 @@
-    <!-- Footer -->
+        <!-- Footer -->
         <footer class="footer">
             <div class="footer-content">
-                <div class="footer-links">
-                    <a href="#">About</a>
-                    <a href="#">Privacy</a>
-                    <a href="#">Terms</a>
-                    <a href="#">Contact</a>
-                </div>
                 <div class="footer-copyright">
-                    &copy; <?= e(date('Y')) ?> <a href="#">ShopWise Kenya</a>. All Rights Reserved.
+                    &copy; <?= e(date('Y')) ?> <a href="<?= e(url('admin/')) ?>">ShopWise Kenya</a> · Nairobi. All Rights Reserved.
                 </div>
                 <div class="footer-credits">
                     <div class="credits">
@@ -25,8 +19,8 @@
 
     <!-- Back to Top -->
     <a href="#" class="back-to-top">
-    <i class="bi bi-arrow-up"></i>
-  </a>
+        <i class="bi bi-arrow-up"></i>
+    </a>
 
     <!-- Vendor JS Files -->
     <script src="<?= e(asset('admin/assets/vendor/bootstrap/js/bootstrap.bundle.min.js')) ?>"></script>
@@ -49,4 +43,5 @@
 
     <?php if (!empty($pageScripts)) echo $pageScripts; ?>
 </body>
+
 </html>

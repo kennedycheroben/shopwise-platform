@@ -90,14 +90,23 @@ Create the database and database user in cPanel first (cPanel may prefix the dat
    - Password: `""` (empty for standard XAMPP)
    - Base URL: Leave empty `""` for automatic dynamic detection, or specify `http://localhost/shopwise-platform/public`.
 
-### 4. Dependencies
+### 4. File & Directory Permissions
+- **Local XAMPP Development**:
+  Apache runs under user/group `daemon:daemon`. Ensure `public/uploads` and `app/storage` are writable by the web server:
+  ```bash
+  sudo chown -R daemon:daemon /opt/lampp/htdocs/shopwise-platform/public/uploads /opt/lampp/htdocs/shopwise-platform/app/storage
+  ```
+- **cPanel Shared Hosting (Production)**:
+  On cPanel with suPHP/suExec, folders **must strictly be set to `0755`** and files to **`0644`**. Setting directories to `0777` on cPanel triggers `500 Internal Server Error`. The application's `ImageUploadService` automatically enforces `0755` directory creation and `0644` file permissions.
+
+### 5. Dependencies
 This phase has no Composer dependencies. When PHPMailer is added for production email delivery, install it locally and commit the resulting `vendor/` directory because the target host has no Composer:
 ```bash
 composer install
 ```
 Do not run Composer on the production server.
 
-### 5. Provision the Administrator Account
+### 6. Provision the Administrator Account
 Run the CLI provisioning script to create your superadmin account:
 ```bash
 /opt/lampp/bin/php scripts/create_admin.php

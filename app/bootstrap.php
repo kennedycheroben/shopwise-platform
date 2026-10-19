@@ -39,18 +39,12 @@ date_default_timezone_set($appConfig['app']['timezone'] ?? 'Africa/Nairobi');
 // 5. Central Error & Exception Handler
 $logDir = __DIR__ . '/storage/logs';
 $logFile = $logDir . '/app.log';
-$logAvailable = true;
+$logAvailable = false;
 
-if (!is_dir($logDir)) {
-    if (!@mkdir($logDir, 0755, true) && !is_dir($logDir)) {
-        $logAvailable = false;
+if (is_dir($logDir) || @mkdir($logDir, 0755, true)) {
+    if (is_writable($logDir) && (!file_exists($logFile) || is_writable($logFile))) {
+        $logAvailable = true;
     }
-}
-if ($logAvailable && !is_writable($logDir)) {
-    $logAvailable = false;
-}
-if (!$logAvailable) {
-    $logFile = 'php://stderr';
 }
 
 $environment = $appConfig['app']['environment'] ?? 'production';
@@ -64,13 +58,29 @@ if ($isDebug) {
     ini_set('display_errors', '0');
 }
 ini_set('log_errors', '1');
-ini_set('error_log', $logFile);
+if ($logAvailable) {
+    ini_set('error_log', $logFile);
+}
 
-set_exception_handler(function (Throwable $e) use ($environment, $logFile): void {
+set_error_handler(function (int $errno, string $errstr, string $errfile, int $errline) use ($logAvailable, $logFile): bool {
+    if (!(error_reporting() & $errno)) {
+        return false;
+    }
+    $timestamp = date('Y-m-d H:i:s T');
+    $logMsg = "[{$timestamp}] PHP Error [{$errno}]: {$errstr} in {$errfile}:{$errline}\n";
+    if ($logAvailable && @file_put_contents($logFile, $logMsg, FILE_APPEND | LOCK_EX) !== false) {
+        // successfully logged to file
+    } else {
+        error_log($logMsg);
+    }
+    return false;
+});
+
+set_exception_handler(function (Throwable $e) use ($environment, $logAvailable, $logFile): void {
     $timestamp = date('Y-m-d H:i:s T');
     $logMsg = "[{$timestamp}] Uncaught Exception: {$e->getMessage()} in {$e->getFile()}:{$e->getLine()}\nStack Trace:\n{$e->getTraceAsString()}\n";
-    if ($logFile !== 'php://stderr') {
-        @file_put_contents($logFile, $logMsg, FILE_APPEND | LOCK_EX);
+    if ($logAvailable && @file_put_contents($logFile, $logMsg, FILE_APPEND | LOCK_EX) !== false) {
+        // successfully logged to file
     } else {
         error_log($logMsg);
     }

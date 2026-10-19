@@ -5,7 +5,17 @@ final class Permissions
 {
     private const MAP = [
         'admin' => ['*'],
-        'staff' => ['products.view','products.edit','inventory.adjust','orders.view','orders.manage','customers.view','reviews.moderate','messages.manage'],
+        'staff' => [
+            'products.view',
+            'products.edit',
+            'categories.manage',
+            'inventory.adjust',
+            'orders.view',
+            'orders.manage',
+            'customers.view',
+            'reviews.moderate',
+            'messages.manage',
+        ],
     ];
     public static function can(string $ability, ?string $role = null): bool
     {
