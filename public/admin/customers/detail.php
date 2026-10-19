@@ -12,9 +12,19 @@ $actorId = (int)$currentUser['id'];
 $ip = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
 $isAdmin = ($currentUser['role'] ?? '') === 'admin';
 
-$customerId = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
-if ($customerId <= 0) {
-    redirect('admin/customers/');
+$rawId = $_GET['id'] ?? $_POST['id'] ?? null;
+if ($rawId === null || !is_numeric($rawId) || (int)$rawId <= 0) {
+    http_response_code(404);
+    require dirname(__DIR__, 3) . '/app/views/admin/error-404.php';
+    exit;
+}
+$customerId = (int)$rawId;
+
+$customer = CustomerService::find($customerId);
+if (!$customer) {
+    http_response_code(404);
+    require dirname(__DIR__, 3) . '/app/views/admin/error-404.php';
+    exit;
 }
 
 // Handle POST actions (Block / Unblock)
@@ -39,13 +49,6 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     }
 
     redirect('admin/customers/detail.php?id=' . $customerId);
-}
-
-$customer = CustomerService::find($customerId);
-if (!$customer) {
-    http_response_code(404);
-    require dirname(__DIR__, 3) . '/app/views/admin/error-404.php';
-    exit;
 }
 
 $fullName = trim($customer['first_name'] . ' ' . $customer['last_name']) ?: 'Customer #' . $customer['id'];

@@ -11,9 +11,19 @@ $currentUser = AdminAuthService::user();
 $actorId = (int)$currentUser['id'];
 $ip = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
 
-$orderId = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
-if ($orderId <= 0) {
-    redirect('admin/orders/');
+$rawId = $_GET['id'] ?? $_POST['id'] ?? null;
+if ($rawId === null || !is_numeric($rawId) || (int)$rawId <= 0) {
+    http_response_code(404);
+    require dirname(__DIR__, 3) . '/app/views/admin/error-404.php';
+    exit;
+}
+$orderId = (int)$rawId;
+
+$order = OrderService::find($orderId);
+if (!$order) {
+    http_response_code(404);
+    require dirname(__DIR__, 3) . '/app/views/admin/error-404.php';
+    exit;
 }
 
 // Handle POST actions
@@ -57,13 +67,6 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
     }
 
     redirect('admin/orders/detail.php?id=' . $orderId);
-}
-
-$order = OrderService::find($orderId);
-if (!$order) {
-    http_response_code(404);
-    require dirname(__DIR__, 3) . '/app/views/admin/error-404.php';
-    exit;
 }
 
 $pageTitle = 'Order #' . $order['order_number'];
@@ -428,8 +431,16 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
                 </div>
                 <div class="card-body">
                     <div class="mb-2">
-                        <span class="text-muted small d-block">Customer Name:</span>
-                        <strong class="text-dark fs-6"><?= e($order['recipient_name'] ?: ($order['user_first_name'] . ' ' . $order['user_last_name'])) ?></strong>
+                        <span class="text-muted small d-block">Customer Account:</span>
+                        <?php if (!empty($order['user_id'])): ?>
+                            <strong class="text-dark fs-6"><?= e(trim(($order['user_first_name'] ?? '') . ' ' . ($order['user_last_name'] ?? '')) ?: 'Registered Customer') ?></strong>
+                        <?php else: ?>
+                            <span class="badge bg-light text-muted border">Guest Customer</span>
+                        <?php endif; ?>
+                    </div>
+                    <div class="mb-2">
+                        <span class="text-muted small d-block">Recipient Name:</span>
+                        <strong class="text-dark"><?= e($order['recipient_name'] ?: 'N/A') ?></strong>
                     </div>
                     <div class="mb-2">
                         <span class="text-muted small d-block">Phone Number:</span>

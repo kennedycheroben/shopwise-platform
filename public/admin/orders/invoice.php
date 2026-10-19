@@ -7,10 +7,13 @@ use App\Services\Permissions;
 
 Permissions::require('orders.view');
 
-$orderId = (int)($_GET['id'] ?? 0);
-if ($orderId <= 0) {
-    redirect('admin/orders/');
+$rawId = $_GET['id'] ?? null;
+if ($rawId === null || !is_numeric($rawId) || (int)$rawId <= 0) {
+    http_response_code(404);
+    require dirname(__DIR__, 3) . '/app/views/admin/error-404.php';
+    exit;
 }
+$orderId = (int)$rawId;
 
 $order = OrderService::find($orderId);
 if (!$order) {

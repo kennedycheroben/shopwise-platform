@@ -86,6 +86,14 @@ ADMIN_EMAIL="test_admin_${RAND_ID}@test.local"
 STAFF_EMAIL="test_staff_${RAND_ID}@test.local"
 CUST_EMAIL="test_cust_${RAND_ID}@test.local"
 
+# Guard: abort immediately if any test email does not end with @test.local
+for em in "$ADMIN_EMAIL" "$STAFF_EMAIL" "$CUST_EMAIL"; do
+    if [[ "$em" != *@test.local ]]; then
+        echo -e "${RED}FATAL: Test email '$em' does not end with @test.local. Aborting immediately!${NC}"
+        exit 1
+    fi
+done
+
 # ==============================================================================
 # BASELINE SNAPSHOT: Capture resource state before tests begin
 # ==============================================================================
@@ -383,6 +391,7 @@ function test_guard_simulation($userArray, $expectedRejectionReason) {
     $denied = (!$current 
         || !in_array($current["role"], ["admin", "staff"], true) 
         || $current["status"] !== "active" 
+        || ($sessionUser["role"] ?? '') !== $current["role"]
         || (($sessionUser["password_changed_at"] ?? null) !== $current["password_changed_at"]));
     
     if ($denied) {
@@ -392,20 +401,22 @@ function test_guard_simulation($userArray, $expectedRejectionReason) {
     return false;
 }
 
-// 1. Customer role
+// 1. Customer role in DB
 $cust = $pdo->query("SELECT * FROM users WHERE role = 'customer' LIMIT 1")->fetch();
 if (!test_guard_simulation($cust, "customer role")) {
     exit(10);
 }
 
-// 2. Blocked staff
-$stmt = $pdo->prepare("INSERT INTO users (first_name, last_name, email, role, status, created_at) VALUES ('BStaff', 'T', 'bstaff_" . time() . "@test.local', 'staff', 'blocked', NOW())");
-$stmt->execute();
+// 2. Blocked staff in DB
+$testStaffEmail = "bstaff_" . time() . "@test.local";
+$stmt = $pdo->prepare("INSERT INTO users (first_name, last_name, email, role, status, created_at) VALUES ('BStaff', 'Tester', :email, 'staff', 'blocked', NOW())");
+$stmt->execute([':email' => $testStaffEmail]);
 $bStaffId = (int)$pdo->lastInsertId();
 $bStaff = $pdo->query("SELECT * FROM users WHERE id = {$bStaffId}")->fetch();
 if (!test_guard_simulation($bStaff, "blocked staff")) {
     exit(11);
 }
+$pdo->exec("DELETE FROM users WHERE id = {$bStaffId}");
 
 // 3. Deleted user
 $deletedUser = ["id" => 999999, "role" => "admin", "status" => "active", "password_changed_at" => null];
@@ -413,13 +424,41 @@ if (!test_guard_simulation($deletedUser, "deleted user")) {
     exit(12);
 }
 
-// 4. Role-changed / credentials-changed user
-$admin = $pdo->query("SELECT * FROM users WHERE role = 'admin' LIMIT 1")->fetch();
-$tampered = $admin;
-$tampered["password_changed_at"] = "2020-01-01 00:00:00"; // mismatch
-if (!test_guard_simulation($tampered, "stale credentials")) {
+// 4. Role-changed: admin demoted to customer
+$testUserEmail = "demoted_" . time() . "@test.local";
+$stmt = $pdo->prepare("INSERT INTO users (first_name, last_name, email, role, status, created_at) VALUES ('Demoted', 'Tester', :email, 'customer', 'active', NOW())");
+$stmt->execute([':email' => $testUserEmail]);
+$demotedId = (int)$pdo->lastInsertId();
+// Session thinks user is admin, but DB has user demoted to customer
+$sessionAsAdmin = ["id" => $demotedId, "role" => "admin", "status" => "active", "password_changed_at" => null];
+if (!test_guard_simulation($sessionAsAdmin, "admin demoted to customer")) {
     exit(13);
 }
+$pdo->exec("DELETE FROM users WHERE id = {$demotedId}");
+
+// 5. Role-changed: staff promoted to admin
+$testPromoEmail = "promoted_" . time() . "@test.local";
+$stmt = $pdo->prepare("INSERT INTO users (first_name, last_name, email, role, status, created_at) VALUES ('Promoted', 'Tester', :email, 'admin', 'active', NOW())");
+$stmt->execute([':email' => $testPromoEmail]);
+$promotedId = (int)$pdo->lastInsertId();
+// Session thinks user is staff, but DB has user promoted to admin
+$sessionAsStaff = ["id" => $promotedId, "role" => "staff", "status" => "active", "password_changed_at" => null];
+if (!test_guard_simulation($sessionAsStaff, "staff promoted to admin")) {
+    exit(14);
+}
+$pdo->exec("DELETE FROM users WHERE id = {$promotedId}");
+
+// 6. User whose password_changed_at is newer than session
+$testPassEmail = "passchange_" . time() . "@test.local";
+$stmt = $pdo->prepare("INSERT INTO users (first_name, last_name, email, role, status, password_changed_at, created_at) VALUES ('PassChange', 'Tester', :email, 'admin', 'active', '2026-10-19 12:00:00', NOW())");
+$stmt->execute([':email' => $testPassEmail]);
+$passChangeId = (int)$pdo->lastInsertId();
+// Session has older password timestamp
+$sessionOldPass = ["id" => $passChangeId, "role" => "admin", "status" => "active", "password_changed_at" => "2026-10-18 08:00:00"];
+if (!test_guard_simulation($sessionOldPass, "password changed after session created")) {
+    exit(15);
+}
+$pdo->exec("DELETE FROM users WHERE id = {$passChangeId}");
 
 exit(0);
 EOF
@@ -442,28 +481,38 @@ create_test_order() {
     local initial_status="$1"
     local initial_pay_status="$2"
     local ord_num="TEST-ORD-${RAND_ID}-$3"
+    local reserve_stock="${4:-0}"
+    local var_id="${5:-1}"
     
-    local oid=$("$PHP_CMD" -r "
+    local out=$("$PHP_CMD" -r "
         require 'app/bootstrap.php';
         use App\Database\Database;
         \$pdo = Database::getInstance();
+        \$stockReleased = $reserve_stock ? 0 : 1;
         \$pdo->prepare(\"
             INSERT INTO orders (order_number, user_id, status, payment_status, subtotal, delivery_fee, discount, total, delivery_method, recipient_name, phone, county, area, stock_released, idempotency_token, created_at)
-            VALUES ('$ord_num', $CUST_USER_ID, '$initial_status', '$initial_pay_status', 1000.00, 200.00, 0.00, 1200.00, 'delivery', 'Test Recipient', '+254711223344', 'Nairobi', 'Westlands', 0, UUID(), NOW())
+            VALUES ('$ord_num', $CUST_USER_ID, '$initial_status', '$initial_pay_status', 1000.00, 200.00, 0.00, 1200.00, 'delivery', 'Test Recipient', '+254711223344', 'Nairobi', 'Westlands', {\$stockReleased}, UUID(), NOW())
         \")->execute();
         \$oid = (int)\$pdo->lastInsertId();
         
-        // Add 1 order item for variant 1
+        // Add 1 order item for variant $var_id
         \$pdo->prepare(\"
             INSERT INTO order_items (order_id, product_id, variant_id, product_name, size, color, sku, unit_price, quantity, line_total)
-            VALUES (\$oid, 1, 1, 'Test Product', 'M', 'Black', 'TEST-SKU-1', 1000.00, 1, 1000.00)
+            VALUES (\$oid, 1, $var_id, 'Test Product', 'M', 'Black', 'TEST-SKU-$var_id', 1000.00, 1, 1000.00)
         \")->execute();
         
-        // Simulate inventory reservation
-        \$pdo->exec(\"UPDATE product_variants SET stock_qty = stock_qty - 1 WHERE id = 1\");
+        // If stock reservation requested, decrement variant stock
+        if ($reserve_stock) {
+            \$pdo->exec(\"UPDATE product_variants SET stock_qty = stock_qty - 1 WHERE id = $var_id\");
+        }
         
-        echo \$oid;
-    " | tail -n 1 | tr -dc '0-9')
+        echo \"ORDER_ID:\" . \$oid;
+    ")
+    local oid=$(echo "$out" | grep -o 'ORDER_ID:[0-9]*' | cut -d: -f2)
+    if [ -z "$oid" ]; then
+        echo "ERROR creating test order ($ord_num): $out" >&2
+        exit 1
+    fi
     echo "$oid"
 }
 
@@ -525,31 +574,71 @@ else
     fail "Write counts mismatch: history=$HIST_COUNT, audit=$AUDIT_COUNT, email=$EMAIL_COUNT (expected 5 each)"
 fi
 
-# Test disallowed transitions:
-# a) delivered -> processing
-# b) pending_payment -> delivered
-# c) cancelled -> paid
-"$PHP_CMD" -r "
-require 'app/bootstrap.php';
-\$_SESSION['admin_user'] = ['id' => $ADMIN_USER_ID, 'role' => 'admin'];
-use App\Services\OrderService;
+# Test all 7 disallowed transitions specified in brief:
+# delivered->processing, pending_payment->delivered, cancelled->paid, expired->paid,
+# refunded->processing, paid->delivered, processing->paid
+DISALLOWED_CASES=(
+    "delivered:processing:DIS1"
+    "pending_payment:delivered:DIS2"
+    "cancelled:paid:DIS3"
+    "expired:paid:DIS4"
+    "refunded:processing:DIS5"
+    "paid:delivered:DIS6"
+    "processing:paid:DIS7"
+)
 
-\$actor = $ADMIN_USER_ID;
-
-// Disallowed 1: delivered order -> processing
-\$oDelivered = $TEST_ORD_C; // currently refunded
-try {
-    OrderService::transition(\$oDelivered, 'processing', \$actor, 'Illegal');
-    exit(1); // should have thrown
-} catch (\DomainException \$e) {}
-
-exit(0);
-"
-if [ $? -eq 0 ]; then
-    pass "Disallowed transition (refunded -> processing) correctly refused with DomainException."
-else
-    fail "Disallowed transition was incorrectly permitted"
-fi
+for disCase in "${DISALLOWED_CASES[@]}"; do
+    IFS=':' read -r from_st to_st suffix <<< "$disCase"
+    
+    pay_st="unpaid"
+    if [ "$from_st" = "paid" ] || [ "$from_st" = "processing" ] || [ "$from_st" = "delivered" ]; then
+        pay_st="paid"
+    fi
+    if [ "$from_st" = "refunded" ]; then
+        pay_st="refunded"
+    fi
+    
+    DIS_OID=$(create_test_order "$from_st" "$pay_st" "$suffix")
+    
+    PRE_STATUS=$(run_sql "SELECT status FROM orders WHERE id = $DIS_OID;" | tail -n 1)
+    PRE_HIST=$(run_sql "SELECT COUNT(*) FROM order_status_history WHERE order_id = $DIS_OID;" | tail -n 1)
+    PRE_AUDIT=$(run_sql "SELECT COUNT(*) FROM audit_log WHERE entity_id = $DIS_OID;" | tail -n 1)
+    PRE_EMAIL=$(run_sql "SELECT COUNT(*) FROM email_queue WHERE subject LIKE '%#TEST-ORD-${RAND_ID}-${suffix}%';" | tail -n 1)
+    PRE_MOVEMENTS=$(run_sql "SELECT COUNT(*) FROM inventory_movements WHERE order_id = $DIS_OID;" | tail -n 1)
+    PRE_STOCK=$(run_sql "SELECT stock_qty FROM product_variants WHERE id = 1;" | tail -n 1)
+    
+    "$PHP_CMD" -r "
+        require 'app/bootstrap.php';
+        \$_SESSION['admin_user'] = ['id' => $ADMIN_USER_ID, 'role' => 'admin'];
+        use App\Services\OrderService;
+        try {
+            OrderService::transition($DIS_OID, '$to_st', $ADMIN_USER_ID, 'Disallowed test note');
+            exit(1); // Failed: should have thrown
+        } catch (\DomainException \$e) {
+            exit(0); // Success: transition rejected
+        }
+    " >/dev/null 2>&1
+    DIS_RES=$?
+    
+    POST_STATUS=$(run_sql "SELECT status FROM orders WHERE id = $DIS_OID;" | tail -n 1)
+    POST_HIST=$(run_sql "SELECT COUNT(*) FROM order_status_history WHERE order_id = $DIS_OID;" | tail -n 1)
+    POST_AUDIT=$(run_sql "SELECT COUNT(*) FROM audit_log WHERE entity_id = $DIS_OID;" | tail -n 1)
+    POST_EMAIL=$(run_sql "SELECT COUNT(*) FROM email_queue WHERE subject LIKE '%#TEST-ORD-${RAND_ID}-${suffix}%';" | tail -n 1)
+    POST_MOVEMENTS=$(run_sql "SELECT COUNT(*) FROM inventory_movements WHERE order_id = $DIS_OID;" | tail -n 1)
+    POST_STOCK=$(run_sql "SELECT stock_qty FROM product_variants WHERE id = 1;" | tail -n 1)
+    
+    if [ "$DIS_RES" -eq 0 ] && \
+       [ "$POST_STATUS" = "$PRE_STATUS" ] && \
+       [ "$POST_HIST" -eq "$PRE_HIST" ] && \
+       [ "$POST_AUDIT" -eq "$PRE_AUDIT" ] && \
+       [ "$POST_EMAIL" -eq "$PRE_EMAIL" ] && \
+       [ "$POST_MOVEMENTS" -eq "$PRE_MOVEMENTS" ] && \
+       [ "$POST_STOCK" -eq "$PRE_STOCK" ]; then
+        pass "Disallowed transition ($from_st -> $to_st) correctly rejected with zero state changes."
+    else
+        fail "Disallowed transition ($from_st -> $to_st) caused unexpected change or was not rejected!"
+    fi
+done
 
 # ==============================================================================
 # TEST D: Stale-State Protection
@@ -590,7 +679,7 @@ fi
 info "TEST E: Concurrency Safety"
 
 # E-1: 10 Parallel Cancels on a paid order with reserved stock
-TEST_ORD_E1=$(create_test_order 'paid' 'paid' 'E1')
+TEST_ORD_E1=$(create_test_order 'paid' 'paid' 'E1' 1 1)
 
 V1_START_STOCK=$(run_sql "SELECT stock_qty FROM product_variants WHERE id = 1;" | tail -n 1)
 
@@ -661,7 +750,7 @@ fi
 info "TEST F: Idempotent Cancel & Stock Restoration across Order Statuses"
 
 # F-1: Cancel pending_payment -> restores stock
-ORD_F_PENDING=$(create_test_order 'pending_payment' 'unpaid' 'F1')
+ORD_F_PENDING=$(create_test_order 'pending_payment' 'unpaid' 'F1' 1 2)
 "$PHP_CMD" -r "
 require 'app/bootstrap.php';
 \$_SESSION['admin_user'] = ['id' => $ADMIN_USER_ID, 'role' => 'admin'];
@@ -672,7 +761,7 @@ F1_STATUS=$(run_sql "SELECT status, stock_released FROM orders WHERE id = $ORD_F
 pass "Cancel on pending_payment order sets status=cancelled and stock_released=1: $F1_STATUS"
 
 # F-2: Cancel paid order -> restores stock, leaves payment_status=paid (refund required)
-ORD_F_PAID=$(create_test_order 'paid' 'paid' 'F2')
+ORD_F_PAID=$(create_test_order 'paid' 'paid' 'F2' 1 3)
 "$PHP_CMD" -r "
 require 'app/bootstrap.php';
 \$_SESSION['admin_user'] = ['id' => $ADMIN_USER_ID, 'role' => 'admin'];
@@ -687,7 +776,7 @@ else
 fi
 
 # F-3: Cancel processing order -> restores stock
-ORD_F_PROC=$(create_test_order 'processing' 'paid' 'F3')
+ORD_F_PROC=$(create_test_order 'processing' 'paid' 'F3' 1 4)
 "$PHP_CMD" -r "
 require 'app/bootstrap.php';
 \$_SESSION['admin_user'] = ['id' => $ADMIN_USER_ID, 'role' => 'admin'];
@@ -826,8 +915,53 @@ else
     fail "Packing slip contains $PRICE_MATCHES price or currency strings!"
 fi
 
+# H-2: Verify invoice total, order detail total, and orders.total equality across all demo and test orders
+TOTALS_PARSED=$("$PHP_CMD" -r "
+require 'app/bootstrap.php';
+\$_SESSION['admin_user'] = ['id' => $ADMIN_USER_ID, 'role' => 'admin'];
+use App\Database\Database;
+\$pdo = Database::getInstance();
+\$orders = \$pdo->query('SELECT id, order_number, total FROM orders')->fetchAll(PDO::FETCH_ASSOC);
+
+\$failures = 0;
+foreach (\$orders as \$o) {
+    \$oid = (int)\$o['id'];
+    \$expTotal = format_money((float)\$o['total']);
+    
+    // Fetch invoice HTML via curl
+    \$invHtml = shell_exec('curl -s -b \"$COOKIE_ADMIN\" \"${BASE_URL}/admin/orders/invoice.php?id=' . \$oid . '\"');
+    if (!preg_match('/<span>Grand Total:<\/span>\s*<span[^>]*>([^<]+)<\/span>/i', \$invHtml, \$m1)) {
+        \$failures++;
+        continue;
+    }
+    \$invTotal = trim(\$m1[1]);
+    
+    // Fetch detail HTML via curl
+    \$detHtml = shell_exec('curl -s -b \"$COOKIE_ADMIN\" \"${BASE_URL}/admin/orders/detail.php?id=' . \$oid . '\"');
+    if (!preg_match('/<span>Grand Total:<\/span>\s*<span[^>]*>([^<]+)<\/span>/i', \$detHtml, \$m2)) {
+        \$failures++;
+        continue;
+    }
+    \$detTotal = trim(\$m2[1]);
+    
+    if (\$invTotal !== \$expTotal || \$detTotal !== \$expTotal) {
+        \$failures++;
+    }
+}
+
+if (\$failures > 0) exit(1);
+echo count(\$orders);
+exit(0);
+")
+if [ $? -eq 0 ]; then
+    pass "Totals parity verified: invoice total == order detail total == orders.total across all $TOTALS_PARSED orders."
+else
+    fail "Totals mismatch detected when parsing invoice or order detail HTML!"
+fi
+
+
 # ==============================================================================
-# TEST I: Security (SQLi, XSS, CSRF, IDOR, Mass Assignment)
+# TEST I: Security (SQLi, Comprehensive XSS, Header Injection, CSRF, IDOR)
 # ==============================================================================
 info "TEST I: Security & Hardening"
 
@@ -840,38 +974,154 @@ else
     fail "SQLi probe triggered SQL errors in orders search!"
 fi
 
-# I-2: XSS Escaping in Customer Name & Notes
-ORD_XSS=$(create_test_order 'pending_payment' 'unpaid' 'XSS')
-UPD_RES=$("$PHP_CMD" -r "
+# I-2: Comprehensive XSS Escaping across all screens and queued emails
+# Payloads in customer name, recipient name, customer notes, internal note, and product name
+CUST_XSS_ID=$("$PHP_CMD" -r "
     require 'app/bootstrap.php';
     use App\Database\Database;
     \$pdo = Database::getInstance();
-    \$stmt = \$pdo->prepare('UPDATE orders SET recipient_name = :n, customer_notes = :c WHERE id = :id');
-    \$stmt->execute([
-        ':n' => '<script>alert(\"xss-name\")</script>',
-        ':c' => '<img src=x onerror=alert(\"xss-note\")>',
-        ':id' => $ORD_XSS
-    ]);
-    echo \$stmt->rowCount();
+    \$stmt = \$pdo->prepare(\"
+        INSERT INTO users (first_name, last_name, email, role, status, created_at)
+        VALUES ('<script>alert(\\\"xss-cust-fn\\\")</script>', '<script>alert(\\\"xss-cust-ln\\\")</script>', 'xss_${RAND_ID}@test.local', 'customer', 'active', NOW())
+    \");
+    \$stmt->execute();
+    echo \$pdo->lastInsertId();
 ")
 
+ORD_XSS=$(create_test_order 'pending_payment' 'unpaid' 'XSS')
+"$PHP_CMD" -r "
+    require 'app/bootstrap.php';
+    use App\Database\Database;
+    \$pdo = Database::getInstance();
+    
+    // Update order with XSS recipient name, customer notes, user_id
+    \$stmt = \$pdo->prepare('UPDATE orders SET user_id = :uid, recipient_name = :n, customer_notes = :c WHERE id = :id');
+    \$stmt->execute([
+        ':uid' => $CUST_XSS_ID,
+        ':n'   => '<img src=x onerror=alert(\"xss-recip\")>',
+        ':c'   => '<script>alert(\"xss-notes\")</script>',
+        ':id'  => $ORD_XSS,
+    ]);
+    
+    // Update order items with XSS product name
+    \$stmt2 = \$pdo->prepare('UPDATE order_items SET product_name = :p WHERE order_id = :id');
+    \$stmt2->execute([
+        ':p'  => '<svg onload=alert(\"xss-prod\")>',
+        ':id' => $ORD_XSS,
+    ]);
+"
+
+# Add internal note with XSS
+"$PHP_CMD" -r "
+    require 'app/bootstrap.php';
+    \$_SESSION['admin_user'] = ['id' => $ADMIN_USER_ID, 'role' => 'admin'];
+    use App\Services\OrderService;
+    OrderService::addInternalNote($ORD_XSS, '<b>Bold Note</b><script>alert(\"xss-internal\")</script>', $ADMIN_USER_ID);
+"
+
+# 1. Verify Orders List escaping
+ORDERS_LIST_HTML=$(curl -s -b "$COOKIE_ADMIN" "${BASE_URL}/admin/orders/")
+if [ $(echo "$ORDERS_LIST_HTML" | grep -c "&lt;img src=x") -gt 0 ] && [ $(echo "$ORDERS_LIST_HTML" | grep -c "<img src=x onerror") -eq 0 ]; then
+    pass "XSS payload in recipient name properly escaped on orders list."
+else
+    fail "XSS in recipient name was unescaped on orders list!"
+fi
+
+# 2. Verify Order Detail escaping
 DETAIL_HTML=$(curl -s -b "$COOKIE_ADMIN" "${BASE_URL}/admin/orders/detail.php?id=${ORD_XSS}")
-
-if [ $(echo "$DETAIL_HTML" | grep -c "&lt;script&gt;alert") -gt 0 ] && [ $(echo "$DETAIL_HTML" | grep -c "<script>alert") -eq 0 ]; then
-    pass "XSS payload in customer name properly escaped on order detail."
+if [ $(echo "$DETAIL_HTML" | grep -c "&lt;img src=x") -gt 0 ] && [ $(echo "$DETAIL_HTML" | grep -c "<img src=x onerror") -eq 0 ] && \
+   [ $(echo "$DETAIL_HTML" | grep -c "&lt;script&gt;alert(&quot;xss-notes") -gt 0 ] && [ $(echo "$DETAIL_HTML" | grep -c "<script>alert(\"xss-notes\")") -eq 0 ] && \
+   [ $(echo "$DETAIL_HTML" | grep -c "&lt;svg onload") -gt 0 ] && [ $(echo "$DETAIL_HTML" | grep -c "<svg onload=alert") -eq 0 ] && \
+   [ $(echo "$DETAIL_HTML" | grep -c "&lt;script&gt;alert(&quot;xss-internal") -gt 0 ] && [ $(echo "$DETAIL_HTML" | grep -c "<script>alert(\"xss-internal\")") -eq 0 ] && \
+   [ $(echo "$DETAIL_HTML" | grep -c "&lt;script&gt;alert(&quot;xss-cust") -gt 0 ] && [ $(echo "$DETAIL_HTML" | grep -c "<script>alert(\"xss-cust") -eq 0 ]; then
+    pass "XSS payloads (recipient, customer notes, product name, internal note, customer name) properly escaped on order detail."
 else
-    fail "XSS payload in customer name was NOT escaped!"
+    fail "XSS payload unescaped on order detail!"
 fi
 
-if [ $(echo "$DETAIL_HTML" | grep -c "&lt;img src=x") -gt 0 ] && [ $(echo "$DETAIL_HTML" | grep -c "<img src=x") -eq 0 ]; then
-    pass "XSS payload in customer notes properly escaped on order detail."
+# 3. Verify Invoice escaping
+INV_XSS_HTML=$(curl -s -b "$COOKIE_ADMIN" "${BASE_URL}/admin/orders/invoice.php?id=${ORD_XSS}")
+if [ $(echo "$INV_XSS_HTML" | grep -c "&lt;img src=x") -gt 0 ] && [ $(echo "$INV_XSS_HTML" | grep -c "<img src=x onerror") -eq 0 ] && \
+   [ $(echo "$INV_XSS_HTML" | grep -c "&lt;svg onload") -gt 0 ] && [ $(echo "$INV_XSS_HTML" | grep -c "<svg onload=alert") -eq 0 ]; then
+    pass "XSS payloads (recipient, product name) properly escaped on invoice."
 else
-    fail "XSS payload in customer notes was NOT escaped!"
+    fail "XSS payload unescaped on invoice!"
 fi
 
-# I-3: CSRF Rejection on Missing or Wrong Token
+# 4. Verify Packing Slip escaping
+PACK_XSS_HTML=$(curl -s -b "$COOKIE_ADMIN" "${BASE_URL}/admin/orders/packing-slip.php?id=${ORD_XSS}")
+if [ $(echo "$PACK_XSS_HTML" | grep -c "&lt;img src=x") -gt 0 ] && [ $(echo "$PACK_XSS_HTML" | grep -c "<img src=x onerror") -eq 0 ] && \
+   [ $(echo "$PACK_XSS_HTML" | grep -c "&lt;svg onload") -gt 0 ] && [ $(echo "$PACK_XSS_HTML" | grep -c "<svg onload=alert") -eq 0 ] && \
+   [ $(echo "$PACK_XSS_HTML" | grep -c "&lt;script&gt;alert(&quot;xss-notes") -gt 0 ] && [ $(echo "$PACK_XSS_HTML" | grep -c "<script>alert(\"xss-notes\")") -eq 0 ]; then
+    pass "XSS payloads (recipient, customer notes, product name) properly escaped on packing slip."
+else
+    fail "XSS payload unescaped on packing slip!"
+fi
+
+# 5. Verify Customer List escaping
+CUST_L_HTML=$(curl -s -L -b "$COOKIE_ADMIN" "${BASE_URL}/admin/customers/index.php")
+if [ $(echo "$CUST_L_HTML" | grep -c "&lt;script&gt;alert(&quot;xss-cust") -gt 0 ] && [ $(echo "$CUST_L_HTML" | grep -c "<script>alert(\"xss-cust") -eq 0 ]; then
+    pass "XSS payload in customer name properly escaped on customer list."
+else
+    fail "XSS payload in customer name unescaped on customer list!"
+fi
+
+# 6. Verify Customer Detail escaping
+CUST_D_HTML=$(curl -s -b "$COOKIE_ADMIN" "${BASE_URL}/admin/customers/detail.php?id=${CUST_XSS_ID}")
+if [ $(echo "$CUST_D_HTML" | grep -c "&lt;script&gt;alert(&quot;xss-cust") -gt 0 ] && [ $(echo "$CUST_D_HTML" | grep -c "<script>alert(\"xss-cust") -eq 0 ]; then
+    pass "XSS payload in customer name properly escaped on customer detail."
+else
+    fail "XSS payload in customer name unescaped on customer detail!"
+fi
+
+# I-3: Email HTML Structure and Header Injection Resistance
+# Perform status transition with note containing HTML and CRLF header injection
+"$PHP_CMD" -r "
+    require 'app/bootstrap.php';
+    \$_SESSION['admin_user'] = ['id' => $ADMIN_USER_ID, 'role' => 'admin'];
+    use App\Services\OrderService;
+    OrderService::transition($ORD_XSS, 'paid', $ADMIN_USER_ID, \"<b>Bold Tag</b>\\r\\nBcc: evil@spammer.com\\r\\nSubject: InjectedSubject\");
+"
+
+EMAIL_ROW=$("$PHP_CMD" -r "
+    require 'app/bootstrap.php';
+    use App\Database\Database;
+    \$pdo = Database::getInstance();
+    \$em = \$pdo->query(\"SELECT to_email, subject, body_html, body_text FROM email_queue WHERE to_email LIKE 'xss_%' ORDER BY id DESC LIMIT 1\")->fetch(PDO::FETCH_ASSOC);
+    if (!\$em) {
+        exit(1);
+    }
+    
+    // Check HTML body has escaped tags
+    if (str_contains(\$em['body_html'], '<b>Bold Tag</b>') || !str_contains(\$em['body_html'], '&lt;b&gt;Bold Tag&lt;/b&gt;')) {
+        exit(2);
+    }
+    
+    // Check no raw script/svg tags in HTML body
+    if (str_contains(\$em['body_html'], '<script>') || str_contains(\$em['body_html'], '<svg')) {
+        exit(3);
+    }
+    
+    // Check header injection characters did not alter subject or to_email
+    if (str_contains(\$em['subject'], 'evil@spammer.com') || str_contains(\$em['subject'], 'InjectedSubject')) {
+        exit(4);
+    }
+    if (str_contains(\$em['to_email'], 'evil@spammer.com') || str_contains(\$em['to_email'], 'Bcc:')) {
+        exit(5);
+    }
+    
+    exit(0);
+")
+if [ $? -eq 0 ]; then
+    pass "Email structure and header injection protection verified: HTML tags properly escaped in body_html; CRLF headers rejected from subject and to_email."
+else
+    fail "Email HTML or header injection vulnerability detected in queued email!"
+fi
+
+
+# I-4: CSRF Rejection on Missing or Wrong Token
 NO_CSRF=$(curl -s -o /dev/null -w "%{http_code}" -b "$COOKIE_ADMIN" \
-    -d "action=transition&id=${ORD_XSS}&to_status=paid" \
+    -d "action=transition&id=${ORD_XSS}&to_status=processing" \
     -X POST "${BASE_URL}/admin/orders/detail.php")
 if [ "$NO_CSRF" -eq 403 ]; then
     pass "POST with missing CSRF token rejected with HTTP 403."
@@ -880,7 +1130,7 @@ else
 fi
 
 WRONG_CSRF=$(curl -s -o /dev/null -w "%{http_code}" -b "$COOKIE_ADMIN" \
-    -d "_csrf_token=wrong_token_value&action=transition&id=${ORD_XSS}&to_status=paid" \
+    -d "_csrf_token=wrong_token_value&action=transition&id=${ORD_XSS}&to_status=processing" \
     -X POST "${BASE_URL}/admin/orders/detail.php")
 if [ "$WRONG_CSRF" -eq 403 ]; then
     pass "POST with invalid CSRF token rejected with HTTP 403."
@@ -889,9 +1139,9 @@ else
 fi
 
 
-# I-4: Mass-Assignment Attempt (posting total, payment_status, user_id)
+# I-5: Mass-Assignment Attempt (posting total, payment_status, user_id)
 curl -s -b "$COOKIE_ADMIN" \
-    -d "_csrf_token=${ADMIN_CSRF}&action=transition&id=${ORD_XSS}&to_status=paid&total=0.01&payment_status=refunded&user_id=1" \
+    -d "_csrf_token=${ADMIN_CSRF}&action=transition&id=${ORD_XSS}&to_status=processing&total=0.01&payment_status=refunded&user_id=1" \
     -X POST "${BASE_URL}/admin/orders/detail.php" >/dev/null
 
 XSS_ORD_TOTAL=$(run_sql "SELECT total FROM orders WHERE id = ${ORD_XSS};" | tail -n 1)
@@ -899,6 +1149,83 @@ if [ "$XSS_ORD_TOTAL" = "1200.00" ]; then
     pass "Mass assignment attempt (tampered total=0.01) ignored; original total 1200.00 preserved."
 else
     fail "Mass assignment allowed total alteration to $XSS_ORD_TOTAL!"
+fi
+
+
+# I-6: IDOR and Parameter Tampering Suite
+# Posting another order's item ID, nonexistent ID (999999), negative ID (-1), and non-numeric ID (abc)
+# to every order and customer endpoint returns clean 404/422 with 0 PHP errors and 0 data change.
+IDOR_PRE_ORDERS_HASH=$(run_sql "SELECT MD5(GROUP_CONCAT(CONCAT(id, ':', status, ':', total) ORDER BY id)) FROM orders;" | tail -n 1)
+IDOR_PRE_CUST_HASH=$(run_sql "SELECT MD5(GROUP_CONCAT(CONCAT(id, ':', status) ORDER BY id)) FROM users WHERE role = 'customer';" | tail -n 1)
+
+IDOR_FAILURES=0
+
+# Helper to check endpoint status and PHP errors
+check_idor_endpoint() {
+    local method="$1"
+    local url="$2"
+    local post_data="$3"
+    local expected_code="$4"
+    local label="$5"
+
+    local resp
+    local code
+    if [ "$method" = "POST" ]; then
+        resp=$(curl -s -w "\n%{http_code}" -b "$COOKIE_ADMIN" -d "$post_data" -X POST "$url")
+    else
+        resp=$(curl -s -w "\n%{http_code}" -b "$COOKIE_ADMIN" "$url")
+    fi
+    code=$(echo "$resp" | tail -n 1)
+    body=$(echo "$resp" | sed '$d')
+
+    local err_count=$(echo "$body" | grep -Ei "Fatal error|Warning:|Notice:|Deprecated:|Exception" | wc -l)
+
+    if [ "$code" -ne "$expected_code" ] || [ "$err_count" -gt 0 ]; then
+        fail "IDOR test failed for $label: expected HTTP $expected_code got $code (PHP errors: $err_count)"
+        IDOR_FAILURES=$((IDOR_FAILURES + 1))
+    fi
+}
+
+# 1. Order Detail GET
+check_idor_endpoint "GET" "${BASE_URL}/admin/orders/detail.php?id=999999" "" 404 "Order Detail GET nonexistent ID 999999"
+check_idor_endpoint "GET" "${BASE_URL}/admin/orders/detail.php?id=-1" "" 404 "Order Detail GET negative ID -1"
+check_idor_endpoint "GET" "${BASE_URL}/admin/orders/detail.php?id=abc" "" 404 "Order Detail GET non-numeric ID abc"
+
+# 2. Order Detail POST
+check_idor_endpoint "POST" "${BASE_URL}/admin/orders/detail.php" "_csrf_token=${ADMIN_CSRF}&action=transition&id=999999&to_status=paid" 404 "Order Detail POST nonexistent ID 999999"
+check_idor_endpoint "POST" "${BASE_URL}/admin/orders/detail.php" "_csrf_token=${ADMIN_CSRF}&action=transition&id=-1&to_status=paid" 404 "Order Detail POST negative ID -1"
+check_idor_endpoint "POST" "${BASE_URL}/admin/orders/detail.php" "_csrf_token=${ADMIN_CSRF}&action=transition&id=abc&to_status=paid" 404 "Order Detail POST non-numeric ID abc"
+
+# 3. Order Detail Item ID tampering (posting someone else's item_id to order endpoint)
+check_idor_endpoint "POST" "${BASE_URL}/admin/orders/detail.php" "_csrf_token=${ADMIN_CSRF}&action=transition&id=${ORD_XSS}&item_id=999999&to_status=processing" 302 "Order Detail POST tampered item_id 999999"
+
+# 4. Invoice GET
+check_idor_endpoint "GET" "${BASE_URL}/admin/orders/invoice.php?id=999999" "" 404 "Invoice GET nonexistent ID 999999"
+check_idor_endpoint "GET" "${BASE_URL}/admin/orders/invoice.php?id=-1" "" 404 "Invoice GET negative ID -1"
+check_idor_endpoint "GET" "${BASE_URL}/admin/orders/invoice.php?id=abc" "" 404 "Invoice GET non-numeric ID abc"
+
+# 5. Packing Slip GET
+check_idor_endpoint "GET" "${BASE_URL}/admin/orders/packing-slip.php?id=999999" "" 404 "Packing Slip GET nonexistent ID 999999"
+check_idor_endpoint "GET" "${BASE_URL}/admin/orders/packing-slip.php?id=-1" "" 404 "Packing Slip GET negative ID -1"
+check_idor_endpoint "GET" "${BASE_URL}/admin/orders/packing-slip.php?id=abc" "" 404 "Packing Slip GET non-numeric ID abc"
+
+# 6. Customer Detail GET
+check_idor_endpoint "GET" "${BASE_URL}/admin/customers/detail.php?id=999999" "" 404 "Customer Detail GET nonexistent ID 999999"
+check_idor_endpoint "GET" "${BASE_URL}/admin/customers/detail.php?id=-1" "" 404 "Customer Detail GET negative ID -1"
+check_idor_endpoint "GET" "${BASE_URL}/admin/customers/detail.php?id=abc" "" 404 "Customer Detail GET non-numeric ID abc"
+
+# 7. Customer Detail POST
+check_idor_endpoint "POST" "${BASE_URL}/admin/customers/detail.php" "_csrf_token=${ADMIN_CSRF}&action=set_status&id=999999&status=blocked" 404 "Customer Detail POST nonexistent ID 999999"
+check_idor_endpoint "POST" "${BASE_URL}/admin/customers/detail.php" "_csrf_token=${ADMIN_CSRF}&action=set_status&id=-1&status=blocked" 404 "Customer Detail POST negative ID -1"
+check_idor_endpoint "POST" "${BASE_URL}/admin/customers/detail.php" "_csrf_token=${ADMIN_CSRF}&action=set_status&id=abc&status=blocked" 404 "Customer Detail POST non-numeric ID abc"
+
+IDOR_POST_ORDERS_HASH=$(run_sql "SELECT MD5(GROUP_CONCAT(CONCAT(id, ':', status, ':', total) ORDER BY id)) FROM orders;" | tail -n 1)
+IDOR_POST_CUST_HASH=$(run_sql "SELECT MD5(GROUP_CONCAT(CONCAT(id, ':', status) ORDER BY id)) FROM users WHERE role = 'customer';" | tail -n 1)
+
+if [ "$IDOR_FAILURES" -eq 0 ] && [ "$IDOR_PRE_ORDERS_HASH" = "$IDOR_POST_ORDERS_HASH" ] && [ "$IDOR_PRE_CUST_HASH" = "$IDOR_POST_CUST_HASH" ]; then
+    pass "IDOR & Tampering test passed: all 16 requests returned clean 404/302 with zero PHP errors and zero data change."
+else
+    fail "IDOR & Tampering test failed or caused database corruption!"
 fi
 
 # ==============================================================================

@@ -7,6 +7,17 @@ USE `shopwise_db`;
 
 START TRANSACTION;
 
+-- Revert stock deduction before deleting inventory movements
+UPDATE `product_variants` pv
+JOIN (
+  SELECT im.variant_id, SUM(im.change_qty) AS net_change
+  FROM `inventory_movements` im
+  JOIN `orders` o ON o.id = im.order_id
+  WHERE o.order_number LIKE 'DEMO2A-%'
+  GROUP BY im.variant_id
+) im_sum ON pv.id = im_sum.variant_id
+SET pv.stock_qty = pv.stock_qty - im_sum.net_change;
+
 DELETE im FROM `inventory_movements` im 
   JOIN `orders` o ON o.id = im.order_id 
   WHERE o.order_number LIKE 'DEMO2A-%';

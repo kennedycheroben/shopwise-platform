@@ -33,10 +33,14 @@ class MailerService
             INSERT INTO email_queue (to_email, to_name, subject, body_html, body_text, status, attempts, created_at)
             VALUES (:to_email, :to_name, :subject, :body_html, :body_text, 'pending', 0, NOW())
         ");
+        $cleanEmail = trim(str_replace(["\r", "\n"], '', $toEmail));
+        $cleanName = $toName !== null ? trim(str_replace(["\r", "\n"], ' ', $toName)) : null;
+        $cleanSubject = trim(str_replace(["\r", "\n"], ' ', $subject));
+
         $stmt->execute([
-            ':to_email'  => $toEmail,
-            ':to_name'   => $toName,
-            ':subject'   => $subject,
+            ':to_email'  => $cleanEmail,
+            ':to_name'   => $cleanName,
+            ':subject'   => $cleanSubject,
             ':body_html' => $htmlBody,
             ':body_text' => $textBody,
         ]);

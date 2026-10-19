@@ -69,6 +69,11 @@ if [ -z "$ADMIN_EMAIL" ] || [ -z "$ADMIN_PASSWORD" ]; then
     exit 1
 fi
 
+if [[ "$ADMIN_EMAIL" != *@test.local ]]; then
+    echo -e "${RED}FATAL: ADMIN_EMAIL '$ADMIN_EMAIL' must end with @test.local. Aborting immediately!${NC}"
+    exit 1
+fi
+
 COOKIE_JAR=$(mktemp)
 BODY_FILE=$(mktemp)
 HEADER_FILE=$(mktemp)

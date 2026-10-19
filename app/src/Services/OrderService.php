@@ -624,13 +624,14 @@ final class OrderService
 
             $hStmt = $pdo->prepare("
                 INSERT INTO order_status_history (order_id, from_status, to_status, note, actor_user_id)
-                VALUES (:oid, :status, :status, :note, :actor)
+                VALUES (:oid, :from_status, :to_status, :note, :actor)
             ");
             $hStmt->execute([
-                ':oid'    => $orderId,
-                ':status' => $currentStatus,
-                ':note'   => $note,
-                ':actor'  => $actorId,
+                ':oid'         => $orderId,
+                ':from_status' => $currentStatus,
+                ':to_status'   => $currentStatus,
+                ':note'        => $note,
+                ':actor'       => $actorId,
             ]);
 
             $remoteIp = $ip ?: ($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1');

@@ -78,6 +78,14 @@ ADMIN_EMAIL="test_admin_${RAND_ID}@test.local"
 STAFF_EMAIL="test_staff_${RAND_ID}@test.local"
 CUST_EMAIL="test_cust_${RAND_ID}@test.local"
 
+# Guard: abort immediately if any test email does not end with @test.local
+for em in "$ADMIN_EMAIL" "$STAFF_EMAIL" "$CUST_EMAIL"; do
+    if [[ "$em" != *@test.local ]]; then
+        echo -e "${RED}FATAL: Test email '$em' does not end with @test.local. Aborting immediately!${NC}"
+        exit 1
+    fi
+done
+
 # ==============================================================================
 # BASELINE SNAPSHOT: Capture resource state before tests begin
 # ==============================================================================

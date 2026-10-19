@@ -221,4 +221,19 @@ INSERT INTO `inventory_movements` (`variant_id`, `change_qty`, `reason`, `order_
 (20, -1, 'sale', 111, 'Reserved for demo order #DEMO2A-011', NOW()),
 (53, -1, 'sale', 112, 'Deducted for demo order #DEMO2A-012', NOW());
 
+-- ------------------------------------------------------------------------------
+-- 6. Update Product Variants Stock to Reflect Demo Orders
+-- ------------------------------------------------------------------------------
+UPDATE `product_variants` pv
+JOIN (
+  SELECT `variant_id`, SUM(`change_qty`) AS `net_change`
+  FROM `inventory_movements`
+  WHERE `order_id` BETWEEN 101 AND 112
+  GROUP BY `variant_id`
+) im ON pv.id = im.variant_id
+SET pv.stock_qty = pv.stock_qty + im.net_change;
+
+-- 7. Mark Cancelled/Expired Orders with Stock Released
+UPDATE `orders` SET `stock_released` = 1 WHERE `id` IN (103, 106);
+
 COMMIT;
