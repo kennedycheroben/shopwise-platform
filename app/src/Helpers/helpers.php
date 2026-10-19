@@ -168,13 +168,13 @@ function regenerate_session_id(bool $deleteOldSession = true): void
  * @param bool $includeDecimals
  * @return string
  */
-function format_money(string|int|null $amount, bool $includeDecimals = false): string
+function format_money(string|int|float|null $amount, bool $includeDecimals = false): string
 {
     if ($amount === null || $amount === '') {
         $amount = '0';
     }
 
-    $amount = trim((string)$amount);
+    $amount = trim(is_float($amount) ? sprintf('%.2f', $amount) : (string)$amount);
     if (!preg_match('/^(-?)(\d+)(?:\.(\d{1,2}))?$/', $amount, $matches)) {
         throw new InvalidArgumentException('Money amounts must be a decimal string with at most two decimal places.');
     }

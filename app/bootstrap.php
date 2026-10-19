@@ -38,10 +38,20 @@ date_default_timezone_set($appConfig['app']['timezone'] ?? 'Africa/Nairobi');
 
 // 5. Central Error & Exception Handler
 $logDir = __DIR__ . '/storage/logs';
-if (!is_dir($logDir)) {
-    mkdir($logDir, 0755, true);
-}
 $logFile = $logDir . '/app.log';
+$logAvailable = true;
+
+if (!is_dir($logDir)) {
+    if (!@mkdir($logDir, 0755, true) && !is_dir($logDir)) {
+        $logAvailable = false;
+    }
+}
+if ($logAvailable && !is_writable($logDir)) {
+    $logAvailable = false;
+}
+if (!$logAvailable) {
+    $logFile = 'php://stderr';
+}
 
 $environment = $appConfig['app']['environment'] ?? 'production';
 $isDebug = !empty($appConfig['app']['debug']) && $environment === 'local';
@@ -59,7 +69,11 @@ ini_set('error_log', $logFile);
 set_exception_handler(function (Throwable $e) use ($environment, $logFile): void {
     $timestamp = date('Y-m-d H:i:s T');
     $logMsg = "[{$timestamp}] Uncaught Exception: {$e->getMessage()} in {$e->getFile()}:{$e->getLine()}\nStack Trace:\n{$e->getTraceAsString()}\n";
-    file_put_contents($logFile, $logMsg, FILE_APPEND | LOCK_EX);
+    if ($logFile !== 'php://stderr') {
+        @file_put_contents($logFile, $logMsg, FILE_APPEND | LOCK_EX);
+    } else {
+        error_log($logMsg);
+    }
 
     if (php_sapi_name() === 'cli') {
         fwrite(STDERR, "Error: " . $e->getMessage() . " (" . $e->getFile() . ":" . $e->getLine() . ")\n");
