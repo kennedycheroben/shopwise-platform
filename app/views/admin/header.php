@@ -6,6 +6,15 @@ $adminUser = $adminUser ?? \App\Services\AdminAuthService::user() ?? [
     'email' => 'admin@shopwise.co.ke',
     'role' => 'staff',
 ];
+
+$userRole = $adminUser['role'] ?? 'staff';
+$notifData = \App\Services\NotificationService::getNotifications($userRole);
+$notifCount = $notifData['total_count'];
+$notifItems = $notifData['items'];
+
+$msgData = \App\Services\NotificationService::getHeaderMessages($userRole);
+$msgCount = $msgData['count'];
+$msgItems = $msgData['items'];
 ?>
 <header class="header">
     <!-- Header Left -->
@@ -19,9 +28,18 @@ $adminUser = $adminUser ?? \App\Services\AdminAuthService::user() ?? [
         </button>
     </div>
 
+    <!-- Header Search (Desktop) -->
+    <div class="header-search">
+        <form class="search-form" action="<?= e(url('admin/search.php')) ?>" method="GET">
+            <i class="bi bi-search search-icon"></i>
+            <input type="search" name="q" placeholder="Search orders, products, customers..." autocomplete="off" value="<?= e($_GET['q'] ?? '') ?>">
+            <kbd class="search-shortcut">/</kbd>
+        </form>
+    </div>
+
     <!-- Header Right -->
     <div class="header-right">
-        <!-- Desktop Actions (hidden on mobile, shown in mobile menu) -->
+        <!-- Desktop Actions -->
         <div class="header-actions-desktop">
 
             <!-- Theme Toggle -->
@@ -29,6 +47,92 @@ $adminUser = $adminUser ?? \App\Services\AdminAuthService::user() ?? [
                 <i class="ph ph-moon theme-icon-dark"></i>
                 <i class="ph ph-sun theme-icon-light"></i>
             </button>
+
+            <!-- Header Divider -->
+            <div class="header-divider"></div>
+
+            <?php if (\App\Services\Permissions::can('messages.manage', $userRole)): ?>
+            <!-- Messages Dropdown -->
+            <div class="header-action dropdown messages-dropdown">
+                <button class="dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" title="Messages" type="button">
+                    <i class="bi bi-chat-left-text"></i>
+                    <?php if ($msgCount > 0): ?>
+                        <span class="badge bg-danger"><?= e($msgCount) ?></span>
+                    <?php endif; ?>
+                </button>
+                <div class="dropdown-menu dropdown-menu-end shadow border-0" style="min-width: 320px;">
+                    <div class="messages-header d-flex justify-content-between align-items-center p-3 border-bottom">
+                        <h6 class="mb-0 fw-semibold">Customer Inquiries</h6>
+                        <a href="<?= e(url('admin/messages/')) ?>" class="small text-decoration-none">View All</a>
+                    </div>
+                    <div class="messages-list p-2" style="max-height: 280px; overflow-y: auto;">
+                        <?php if (empty($msgItems)): ?>
+                            <div class="p-3 text-center text-muted small">No contact messages received.</div>
+                        <?php else: ?>
+                            <?php foreach ($msgItems as $m): ?>
+                                <a href="<?= e(url('admin/messages/detail.php?id=' . $m['id'])) ?>" class="d-flex align-items-start gap-2 p-2 rounded text-decoration-none text-dark hover-bg mb-1 <?= $m['status'] === 'new' ? 'bg-light fw-medium' : '' ?>">
+                                    <div class="rounded-circle bg-primary-subtle text-primary p-2 d-flex align-items-center justify-content-center" style="width: 32px; height: 32px; font-size: 13px;">
+                                        <i class="bi bi-envelope"></i>
+                                    </div>
+                                    <div class="flex-grow-1 overflow-hidden" style="font-size: 13px;">
+                                        <div class="d-flex justify-content-between">
+                                            <span class="text-truncate fw-semibold"><?= e($m['name']) ?></span>
+                                            <span class="text-muted smaller"><?= e(date('d M', strtotime($m['created_at']))) ?></span>
+                                        </div>
+                                        <div class="text-truncate text-muted smaller"><?= e($m['subject']) ?></div>
+                                    </div>
+                                </a>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </div>
+                    <div class="messages-footer p-2 text-center border-top">
+                        <a href="<?= e(url('admin/messages/')) ?>" class="small text-decoration-none fw-medium">See all inquiries &rarr;</a>
+                    </div>
+                </div>
+            </div>
+            <?php endif; ?>
+
+            <!-- Notifications Dropdown -->
+            <div class="header-action dropdown notification-dropdown">
+                <button class="dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" title="Notifications" type="button">
+                    <i class="bi bi-bell"></i>
+                    <?php if ($notifCount > 0): ?>
+                        <span class="badge bg-warning text-dark"><?= e($notifCount) ?></span>
+                    <?php endif; ?>
+                </button>
+                <div class="dropdown-menu dropdown-menu-end shadow border-0" style="min-width: 320px;">
+                    <div class="notification-header d-flex justify-content-between align-items-center p-3 border-bottom">
+                        <h6 class="mb-0 fw-semibold">Notifications</h6>
+                        <?php if ($notifCount > 0): ?>
+                            <span class="badge bg-primary-subtle text-primary"><?= e($notifCount) ?> pending</span>
+                        <?php endif; ?>
+                    </div>
+                    <div class="notification-list p-2" style="max-height: 280px; overflow-y: auto;">
+                        <?php if (empty($notifItems)): ?>
+                            <div class="p-3 text-center text-muted small">
+                                <i class="bi bi-check-circle text-success fs-5 d-block mb-1"></i>
+                                All operational queues are clear!
+                            </div>
+                        <?php else: ?>
+                            <?php foreach ($notifItems as $n): ?>
+                                <a href="<?= e($n['link']) ?>" class="d-flex align-items-start gap-2 p-2 rounded text-decoration-none text-dark hover-bg mb-1">
+                                    <div class="rounded-circle bg-<?= e($n['color']) ?>-subtle text-<?= e($n['color']) ?> p-2 d-flex align-items-center justify-content-center" style="width: 32px; height: 32px; font-size: 14px;">
+                                        <i class="bi <?= e($n['icon']) ?>"></i>
+                                    </div>
+                                    <div class="flex-grow-1" style="font-size: 13px;">
+                                        <div class="fw-semibold"><?= e($n['title']) ?></div>
+                                        <div class="text-muted smaller"><?= e($n['text']) ?></div>
+                                    </div>
+                                    <span class="badge bg-<?= e($n['color']) ?> text-white"><?= e($n['count']) ?></span>
+                                </a>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </div>
+                    <div class="notification-footer p-2 text-center border-top">
+                        <a href="<?= e(url('admin/')) ?>" class="small text-decoration-none fw-medium">View Operations Dashboard</a>
+                    </div>
+                </div>
+            </div>
 
             <!-- Header Divider -->
             <div class="header-divider"></div>
@@ -71,9 +175,8 @@ $adminUser = $adminUser ?? \App\Services\AdminAuthService::user() ?? [
             </div>
         </div>
 
-        <!-- Mobile Actions (visible only on mobile) -->
+        <!-- Mobile Actions -->
         <div class="header-actions-mobile">
-            <!-- Mobile Menu Toggle -->
             <button class="header-action mobile-menu-toggle" title="More" type="button">
                 <i class="bi bi-three-dots-vertical"></i>
             </button>

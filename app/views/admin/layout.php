@@ -6,3 +6,4 @@
 
     <!-- Main Content -->
     <main class="main">
+        <?php require __DIR__ . '/flash.php'; ?>

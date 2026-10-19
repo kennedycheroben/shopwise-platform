@@ -533,7 +533,7 @@ CREATE TABLE `contact_messages` (
   `phone` VARCHAR(20) NULL,
   `subject` VARCHAR(200) NOT NULL,
   `message` TEXT NOT NULL,
-  `status` ENUM('new', 'in_progress', 'resolved', 'archived') NOT NULL DEFAULT 'new',
+  `status` ENUM('new', 'read', 'replied', 'in_progress', 'resolved', 'archived') NOT NULL DEFAULT 'new',
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_contact_status` (`status`),

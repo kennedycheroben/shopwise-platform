@@ -37,7 +37,7 @@ return [
         'consumer_key'        => 'YOUR_MPESA_CONSUMER_KEY',
         'consumer_secret'     => 'YOUR_MPESA_CONSUMER_SECRET',
         'shortcode'           => '174379',  // Default Daraja sandbox Business Shortcode
-        'passkey'             => 'bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919',
+        'passkey'             => 'YOUR_MPESA_PASSKEY',
         'initiator_name'      => 'testapi',
         'callback_url'        => 'https://your-domain.co.ke/api/mpesa/callback.php',
         'transaction_type'    => 'CustomerPayBillOnline',

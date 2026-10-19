@@ -184,6 +184,7 @@ cleanup() {
     END_AUDIT=$(run_sql "SELECT COUNT(*) FROM audit_log;" | tail -n 1)
     END_USERS=$(run_sql "SELECT COUNT(*) FROM users;" | tail -n 1)
     END_STOCK=$(run_sql "SELECT SUM(stock_qty) FROM product_variants;" | tail -n 1)
+    END_VARIANTS=$(run_sql "SELECT COUNT(*) FROM product_variants;" | tail -n 1)
 
     echo "Final resource counts vs baseline:"
     echo "  orders:                 $END_ORDERS (start: $START_ORDERS)"
@@ -195,6 +196,7 @@ cleanup() {
     echo "  audit_log:              $END_AUDIT (start: $START_AUDIT)"
     echo "  users:                  $END_USERS (start: $START_USERS)"
     echo "  stock_checksum (SUM):   $END_STOCK (start: $START_STOCK)"
+    echo "  product_variants:       $END_VARIANTS (expected: 66)"
 
     local drift=0
     [ "$END_ORDERS" -eq "$START_ORDERS" ] || drift=1
@@ -206,9 +208,10 @@ cleanup() {
     [ "$END_AUDIT" -eq "$START_AUDIT" ] || drift=1
     [ "$END_USERS" -eq "$START_USERS" ] || drift=1
     [ "$END_STOCK" -eq "$START_STOCK" ] || drift=1
+    [ "$END_VARIANTS" -eq 66 ] || drift=1
 
     if [ "$drift" -eq 0 ]; then
-        pass "Zero database drift verified: all 9 tracked resource counts match baseline perfectly."
+        pass "Zero database drift verified: all 10 tracked resource counts match baseline perfectly."
     else
         fail "Database drift detected! Pre-test and post-cleanup counts do not match."
     fi
@@ -367,7 +370,7 @@ fi
 # ==============================================================================
 info "TEST B: CLI Guard harness testing session rejection for non-admin roles"
 
-"$PHP_CMD" << 'EOF'
+GUARD_OUTPUT=$("$PHP_CMD" << 'EOF'
 <?php
 require "app/bootstrap.php";
 use App\Database\Database;
@@ -403,9 +406,7 @@ function test_guard_simulation($userArray, $expectedRejectionReason) {
 
 // 1. Customer role in DB
 $cust = $pdo->query("SELECT * FROM users WHERE role = 'customer' LIMIT 1")->fetch();
-if (!test_guard_simulation($cust, "customer role")) {
-    exit(10);
-}
+echo "GUARD_RESULT:customer_role:" . (test_guard_simulation($cust, "customer role") ? "PASS" : "FAIL") . "\n";
 
 // 2. Blocked staff in DB
 $testStaffEmail = "bstaff_" . time() . "@test.local";
@@ -413,39 +414,29 @@ $stmt = $pdo->prepare("INSERT INTO users (first_name, last_name, email, role, st
 $stmt->execute([':email' => $testStaffEmail]);
 $bStaffId = (int)$pdo->lastInsertId();
 $bStaff = $pdo->query("SELECT * FROM users WHERE id = {$bStaffId}")->fetch();
-if (!test_guard_simulation($bStaff, "blocked staff")) {
-    exit(11);
-}
+echo "GUARD_RESULT:blocked_staff:" . (test_guard_simulation($bStaff, "blocked staff") ? "PASS" : "FAIL") . "\n";
 $pdo->exec("DELETE FROM users WHERE id = {$bStaffId}");
 
 // 3. Deleted user
 $deletedUser = ["id" => 999999, "role" => "admin", "status" => "active", "password_changed_at" => null];
-if (!test_guard_simulation($deletedUser, "deleted user")) {
-    exit(12);
-}
+echo "GUARD_RESULT:deleted_user:" . (test_guard_simulation($deletedUser, "deleted user") ? "PASS" : "FAIL") . "\n";
 
-// 4. Role-changed: admin demoted to customer
+// 4. Role-changed: admin demoted to customer mid-session
 $testUserEmail = "demoted_" . time() . "@test.local";
 $stmt = $pdo->prepare("INSERT INTO users (first_name, last_name, email, role, status, created_at) VALUES ('Demoted', 'Tester', :email, 'customer', 'active', NOW())");
 $stmt->execute([':email' => $testUserEmail]);
 $demotedId = (int)$pdo->lastInsertId();
-// Session thinks user is admin, but DB has user demoted to customer
 $sessionAsAdmin = ["id" => $demotedId, "role" => "admin", "status" => "active", "password_changed_at" => null];
-if (!test_guard_simulation($sessionAsAdmin, "admin demoted to customer")) {
-    exit(13);
-}
+echo "GUARD_RESULT:admin_demoted:" . (test_guard_simulation($sessionAsAdmin, "admin demoted to customer") ? "PASS" : "FAIL") . "\n";
 $pdo->exec("DELETE FROM users WHERE id = {$demotedId}");
 
-// 5. Role-changed: staff promoted to admin
+// 5. Role-changed: staff promoted to admin mid-session
 $testPromoEmail = "promoted_" . time() . "@test.local";
 $stmt = $pdo->prepare("INSERT INTO users (first_name, last_name, email, role, status, created_at) VALUES ('Promoted', 'Tester', :email, 'admin', 'active', NOW())");
 $stmt->execute([':email' => $testPromoEmail]);
 $promotedId = (int)$pdo->lastInsertId();
-// Session thinks user is staff, but DB has user promoted to admin
 $sessionAsStaff = ["id" => $promotedId, "role" => "staff", "status" => "active", "password_changed_at" => null];
-if (!test_guard_simulation($sessionAsStaff, "staff promoted to admin")) {
-    exit(14);
-}
+echo "GUARD_RESULT:staff_promoted:" . (test_guard_simulation($sessionAsStaff, "staff promoted to admin") ? "PASS" : "FAIL") . "\n";
 $pdo->exec("DELETE FROM users WHERE id = {$promotedId}");
 
 // 6. User whose password_changed_at is newer than session
@@ -453,22 +444,42 @@ $testPassEmail = "passchange_" . time() . "@test.local";
 $stmt = $pdo->prepare("INSERT INTO users (first_name, last_name, email, role, status, password_changed_at, created_at) VALUES ('PassChange', 'Tester', :email, 'admin', 'active', '2026-10-19 12:00:00', NOW())");
 $stmt->execute([':email' => $testPassEmail]);
 $passChangeId = (int)$pdo->lastInsertId();
-// Session has older password timestamp
 $sessionOldPass = ["id" => $passChangeId, "role" => "admin", "status" => "active", "password_changed_at" => "2026-10-18 08:00:00"];
-if (!test_guard_simulation($sessionOldPass, "password changed after session created")) {
-    exit(15);
-}
+echo "GUARD_RESULT:password_changed:" . (test_guard_simulation($sessionOldPass, "password changed after session created") ? "PASS" : "FAIL") . "\n";
 $pdo->exec("DELETE FROM users WHERE id = {$passChangeId}");
 
-exit(0);
+// 7. Forged role in session array
+$testForgeEmail = "forge_" . time() . "@test.local";
+$stmt = $pdo->prepare("INSERT INTO users (first_name, last_name, email, role, status, created_at) VALUES ('Forge', 'Tester', :email, 'staff', 'active', NOW())");
+$stmt->execute([':email' => $testForgeEmail]);
+$forgeId = (int)$pdo->lastInsertId();
+$sessionForged = ["id" => $forgeId, "role" => "superadmin", "status" => "active", "password_changed_at" => null];
+echo "GUARD_RESULT:forged_role:" . (test_guard_simulation($sessionForged, "forged role in session array") ? "PASS" : "FAIL") . "\n";
+$pdo->exec("DELETE FROM users WHERE id = {$forgeId}");
 EOF
-GUARD_STATUS=$?
+)
 
-if [ "$GUARD_STATUS" -eq 0 ]; then
-    pass "CLI Guard harness verified: customer, blocked staff, deleted user, and credentials mismatch all rejected."
-else
-    fail "CLI Guard harness failed with exit code $GUARD_STATUS"
-fi
+while IFS= read -r line; do
+    if [[ "$line" =~ ^GUARD_RESULT:([^:]+):(PASS|FAIL) ]]; then
+        case_name="${BASH_REMATCH[1]}"
+        status="${BASH_REMATCH[2]}"
+        case "$case_name" in
+            customer_role) label="customer role" ;;
+            blocked_staff) label="blocked staff" ;;
+            deleted_user) label="deleted user" ;;
+            admin_demoted) label="admin demoted to customer mid-session" ;;
+            staff_promoted) label="staff promoted to admin mid-session" ;;
+            password_changed) label="password_changed_at newer than session" ;;
+            forged_role) label="forged role in session array" ;;
+            *) label="$case_name" ;;
+        esac
+        if [ "$status" = "PASS" ]; then
+            pass "Guard harness: $label rejected."
+        else
+            fail "Guard harness: $label failed to reject!"
+        fi
+    fi
+done <<< "$GUARD_OUTPUT"
 
 
 # ==============================================================================
@@ -1139,16 +1150,21 @@ else
 fi
 
 
-# I-5: Mass-Assignment Attempt (posting total, payment_status, user_id)
-curl -s -b "$COOKIE_ADMIN" \
-    -d "_csrf_token=${ADMIN_CSRF}&action=transition&id=${ORD_XSS}&to_status=processing&total=0.01&payment_status=refunded&user_id=1" \
-    -X POST "${BASE_URL}/admin/orders/detail.php" >/dev/null
+# I-5: Mass-Assignment Attempt across all order POST endpoints
+# Attempt posting payment_status, user_id, status, stock_released, created_at, and total
+MASS_ACTIONS=("transition&to_status=processing" "mark_as_paid&receipt_number=RCPTMASS001" "record_refund&refund_notes=MassRefund" "cancel&cancel_reason=MassCancel" "add_note&internal_note=MassNote")
 
-XSS_ORD_TOTAL=$(run_sql "SELECT total FROM orders WHERE id = ${ORD_XSS};" | tail -n 1)
-if [ "$XSS_ORD_TOTAL" = "1200.00" ]; then
-    pass "Mass assignment attempt (tampered total=0.01) ignored; original total 1200.00 preserved."
+for act in "${MASS_ACTIONS[@]}"; do
+    curl -s -b "$COOKIE_ADMIN" \
+        -d "_csrf_token=${ADMIN_CSRF}&action=${act}&id=${ORD_XSS}&total=0.01&payment_status=hacked_paid&user_id=9999&status=hacked_status&stock_released=99&created_at=2000-01-01+00:00:00" \
+        -X POST "${BASE_URL}/admin/orders/detail.php" >/dev/null
+done
+
+XSS_ORD_DATA=$(run_sql "SELECT total, user_id, stock_released, DATE(created_at) FROM orders WHERE id = ${ORD_XSS};" | tail -n 1)
+if echo "$XSS_ORD_DATA" | grep -q "1200.00" && ! echo "$XSS_ORD_DATA" | grep -q "9999" && ! echo "$XSS_ORD_DATA" | grep -q "2000-01-01"; then
+    pass "Mass assignment attempt (tampering total, payment_status, user_id, status, stock_released, created_at) safely ignored across all order POST actions."
 else
-    fail "Mass assignment allowed total alteration to $XSS_ORD_TOTAL!"
+    fail "Mass assignment allowed unauthorized field alteration! Order data: $XSS_ORD_DATA"
 fi
 
 

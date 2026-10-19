@@ -83,6 +83,84 @@ $adminUser = $adminUser ?? \App\Services\AdminAuthService::user() ?? [
                 <li><a class="panel-link<?= (str_contains(($pageTitle ?? ''), 'Customer')) ? ' active' : '' ?>" href="<?= e(url('admin/customers/')) ?>">Customers</a></li>
                 <?php endif; ?>
 
+                <?php if (\App\Services\Permissions::can('coupons.manage')): ?>
+                <li class="panel-nav-group<?= in_array(($activeGroup ?? ''), ['marketing', 'coupons'], true) ? ' open' : '' ?>">
+                    <a class="panel-link panel-group-toggle" href="#" aria-expanded="<?= in_array(($activeGroup ?? ''), ['marketing', 'coupons'], true) ? 'true' : 'false' ?>">
+                        <span>Marketing</span>
+                        <i class="bi bi-chevron-down panel-arrow"></i>
+                    </a>
+                    <ul class="panel-subnav<?= in_array(($activeGroup ?? ''), ['marketing', 'coupons'], true) ? ' show' : '' ?>">
+                        <li><a class="panel-link<?= (str_contains(($pageTitle ?? ''), 'Coupon')) ? ' active' : '' ?>" href="<?= e(url('admin/coupons/')) ?>">Coupons</a></li>
+                    </ul>
+                </li>
+                <?php endif; ?>
+
+                <?php if (\App\Services\Permissions::can('delivery.manage')): ?>
+                <li class="panel-nav-group<?= in_array(($activeGroup ?? ''), ['delivery', 'zones', 'pricing'], true) ? ' open' : '' ?>">
+                    <a class="panel-link panel-group-toggle" href="#" aria-expanded="<?= in_array(($activeGroup ?? ''), ['delivery', 'zones', 'pricing'], true) ? 'true' : 'false' ?>">
+                        <span>Delivery</span>
+                        <i class="bi bi-chevron-down panel-arrow"></i>
+                    </a>
+                    <ul class="panel-subnav<?= in_array(($activeGroup ?? ''), ['delivery', 'zones', 'pricing'], true) ? ' show' : '' ?>">
+                        <li><a class="panel-link<?= (str_contains(($pageTitle ?? ''), 'Zone')) ? ' active' : '' ?>" href="<?= e(url('admin/delivery/zones.php')) ?>">Zones</a></li>
+                        <li><a class="panel-link<?= (str_contains(($pageTitle ?? ''), 'Pricing') || str_contains(($pageTitle ?? ''), 'Quote')) ? ' active' : '' ?>" href="<?= e(url('admin/delivery/pricing.php')) ?>">Pricing &amp; Calculator</a></li>
+                    </ul>
+                </li>
+                <?php endif; ?>
+
+                <?php if (\App\Services\Permissions::can('reviews.moderate') || \App\Services\Permissions::can('messages.manage')): ?>
+                <li class="panel-nav-group<?= in_array(($activeGroup ?? ''), ['content', 'reviews', 'messages'], true) ? ' open' : '' ?>">
+                    <a class="panel-link panel-group-toggle" href="#" aria-expanded="<?= in_array(($activeGroup ?? ''), ['content', 'reviews', 'messages'], true) ? 'true' : 'false' ?>">
+                        <span>Content</span>
+                        <i class="bi bi-chevron-down panel-arrow"></i>
+                    </a>
+                    <ul class="panel-subnav<?= in_array(($activeGroup ?? ''), ['content', 'reviews', 'messages'], true) ? ' show' : '' ?>">
+                        <?php if (\App\Services\Permissions::can('reviews.moderate')): ?>
+                        <li><a class="panel-link<?= (str_contains(($pageTitle ?? ''), 'Review')) ? ' active' : '' ?>" href="<?= e(url('admin/reviews/')) ?>">Reviews</a></li>
+                        <?php endif; ?>
+                        <?php if (\App\Services\Permissions::can('messages.manage')): ?>
+                        <li><a class="panel-link<?= (str_contains(($pageTitle ?? ''), 'Message') || str_contains(($pageTitle ?? ''), 'Inquir')) ? ' active' : '' ?>" href="<?= e(url('admin/messages/')) ?>">Messages</a></li>
+                        <?php endif; ?>
+                    </ul>
+                </li>
+                <?php endif; ?>
+
+                <?php if (\App\Services\Permissions::can('settings.manage')): ?>
+                <li class="panel-nav-group<?= in_array(($activeGroup ?? ''), ['settings', 'store-settings'], true) ? ' open' : '' ?>">
+                    <a class="panel-link panel-group-toggle" href="#" aria-expanded="<?= in_array(($activeGroup ?? ''), ['settings', 'store-settings'], true) ? 'true' : 'false' ?>">
+                        <span>Settings</span>
+                        <i class="bi bi-chevron-down panel-arrow"></i>
+                    </a>
+                    <ul class="panel-subnav<?= in_array(($activeGroup ?? ''), ['settings', 'store-settings'], true) ? ' show' : '' ?>">
+                        <li><a class="panel-link<?= (str_contains(($pageTitle ?? ''), 'Setting')) ? ' active' : '' ?>" href="<?= e(url('admin/settings/')) ?>">Store Settings</a></li>
+                    </ul>
+                </li>
+                <?php endif; ?>
+
+                <?php if (\App\Services\Permissions::can('staff.manage')): ?>
+                <li class="panel-nav-group<?= in_array(($activeGroup ?? ''), ['team', 'staff'], true) ? ' open' : '' ?>">
+                    <a class="panel-link panel-group-toggle" href="#" aria-expanded="<?= in_array(($activeGroup ?? ''), ['team', 'staff'], true) ? 'true' : 'false' ?>">
+                        <span>Team</span>
+                        <i class="bi bi-chevron-down panel-arrow"></i>
+                    </a>
+                    <ul class="panel-subnav<?= in_array(($activeGroup ?? ''), ['team', 'staff'], true) ? ' show' : '' ?>">
+                        <li><a class="panel-link<?= (str_contains(($pageTitle ?? ''), 'Staff') || str_contains(($pageTitle ?? ''), 'Team')) ? ' active' : '' ?>" href="<?= e(url('admin/staff/')) ?>">Staff</a></li>
+                    </ul>
+                </li>
+                <?php endif; ?>
+
+                <?php if (\App\Services\Permissions::can('audit.view')): ?>
+                <li class="panel-nav-group<?= in_array(($activeGroup ?? ''), ['system', 'audit'], true) ? ' open' : '' ?>">
+                    <a class="panel-link panel-group-toggle" href="#" aria-expanded="<?= in_array(($activeGroup ?? ''), ['system', 'audit'], true) ? 'true' : 'false' ?>">
+                        <span>System</span>
+                        <i class="bi bi-chevron-down panel-arrow"></i>
+                    </a>
+                    <ul class="panel-subnav<?= in_array(($activeGroup ?? ''), ['system', 'audit'], true) ? ' show' : '' ?>">
+                        <li><a class="panel-link<?= (str_contains(($pageTitle ?? ''), 'Audit')) ? ' active' : '' ?>" href="<?= e(url('admin/audit-log/')) ?>">Audit Log</a></li>
+                    </ul>
+                </li>
+                <?php endif; ?>
+
                 <li><a class="panel-link<?= ($pageTitle ?? '') === 'My profile' ? ' active' : '' ?>" href="<?= e(url('admin/profile.php')) ?>">My profile</a></li>
             </ul>
         </div>

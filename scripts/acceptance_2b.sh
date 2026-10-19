@@ -144,10 +144,10 @@ cleanup() {
 
         DELETE pv FROM product_variants pv
         JOIN products p ON pv.product_id = p.id
-        WHERE p.name LIKE '%${RAND_ID}%' OR p.slug LIKE '%${RAND_ID}%';
+        WHERE p.name LIKE '%${RAND_ID}%' OR p.slug LIKE '%${RAND_ID}%' OR p.name LIKE 'PermTest_%' OR p.slug LIKE 'permtest-%';
 
-        DELETE FROM products WHERE name LIKE '%${RAND_ID}%' OR slug LIKE '%${RAND_ID}%';
-        DELETE FROM categories WHERE name LIKE '%${RAND_ID}%' OR slug LIKE '%${RAND_ID}%';
+        DELETE FROM products WHERE name LIKE '%${RAND_ID}%' OR slug LIKE '%${RAND_ID}%' OR name LIKE 'PermTest_%' OR slug LIKE 'permtest-%';
+        DELETE FROM categories WHERE name LIKE '%${RAND_ID}%' OR slug LIKE '%${RAND_ID}%' OR name LIKE 'PermCat_%' OR slug LIKE 'permcat-%';
         DELETE FROM users WHERE email LIKE '%@test.local' OR email LIKE '%${RAND_ID}%';
         DELETE FROM login_attempts WHERE identifier LIKE '%@test.local' OR identifier LIKE '%${RAND_ID}%';
         DELETE FROM audit_log WHERE id > $START_MAX_AUDIT_ID OR details LIKE '%${RAND_ID}%';
@@ -224,6 +224,13 @@ cleanup() {
     audit_check "audit_log" "$START_AUDIT" "$END_AUDIT"
     audit_check "users" "$START_USERS" "$END_USERS"
     audit_check "upload_files" "$START_UPLOAD_FILES" "$END_UPLOAD_FILES"
+
+    if [ "$END_VARIANTS" -ne 66 ]; then
+        fail "Variants count mismatch: expected 66, got $END_VARIANTS"
+        any_diff=1
+    else
+        pass "Variants count verified: exactly 66 variants in database."
+    fi
 
     if [ "$any_diff" -eq 0 ]; then
         pass "Hygiene verification: All starting and ending row and file counts match perfectly."

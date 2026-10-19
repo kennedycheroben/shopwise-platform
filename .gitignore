@@ -1,5 +1,8 @@
 # Local Environment Configuration
 app/config/config.local.php
+*.local.php
+.env
+.env.*
 _template_reference/
 
 # Storage & Logs

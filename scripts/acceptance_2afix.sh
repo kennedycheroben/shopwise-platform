@@ -529,9 +529,14 @@ if [ "$DB_AVAILABLE" -eq 1 ]; then
     if [ "$KEEP_TEST_USERS" != "1" ]; then
         run_sql "DELETE FROM users WHERE email='$STAFF_EMAIL'; DELETE FROM login_attempts WHERE identifier='$STAFF_EMAIL';"
     fi
+# Verify variants count
+VAR_COUNT=$(run_sql "SELECT COUNT(*) FROM product_variants;" | tail -n 1)
+if [ "$VAR_COUNT" -eq 66 ]; then
+    pass "Variants count verified: exactly 66 variants in database."
 else
-    warn "MariaDB not reachable via '$MYSQL_CMD'. Role insertion tests in part (e) skipped. Pass DB_USER and DB_PASS if running with non-default MySQL credentials."
+    fail "Variants count mismatch: expected 66, got $VAR_COUNT"
 fi
+
 
 # ------------------------------------------------------------------------------
 # Test Summary

@@ -316,9 +316,14 @@ function unique_slug(string $table, string $text, ?int $ignoreId = null): string
  * @param mixed $default
  * @return mixed
  */
-function setting(string $key, $default = null)
+function setting(string $key, $default = null, bool $refresh = false)
 {
     static $settingsCache = null;
+
+    if ($refresh) {
+        $settingsCache = null;
+        return null;
+    }
 
     if ($settingsCache === null) {
         $settingsCache = [];
@@ -349,6 +354,14 @@ function setting(string $key, $default = null)
     }
 
     return $settingsCache[$key] ?? $default;
+}
+
+/**
+ * Invalidate the in-memory settings cache.
+ */
+function clear_settings_cache(): void
+{
+    setting('', null, true);
 }
 
 /**
