@@ -19,7 +19,7 @@
 
 set -uo pipefail
 
-BASE_URL="${BASE_URL:-http://localhost/shopwise-platform/public}"
+BASE_URL="${BASE_URL:-http://127.0.0.1/shopwise-platform/public}"
 BASE_URL="${BASE_URL%/}"
 
 MYSQL_CMD="${MYSQL_CMD:-/opt/lampp/bin/mysql}"
@@ -34,7 +34,16 @@ fi
 
 DB_USER="${DB_USER:-root}"
 DB_PASS="${DB_PASS:-}"
-DB_NAME="${DB_NAME:-shopwise_db}"
+DB_NAME="${DB_NAME:-shopwise_test}"
+
+if [ "$DB_NAME" = "shopwise_db" ]; then
+    echo -e "\033[0;31mFATAL: Refusing to run tests against protected database '$DB_NAME'!\033[0m" >&2
+    exit 1
+fi
+if [[ ! "$DB_NAME" =~ _test$ ]]; then
+    echo -e "\033[0;31mFATAL: Test database name must end with '_test', got '$DB_NAME'!\033[0m" >&2
+    exit 1
+fi
 
 # Colors
 GREEN='\033[0;32m'
@@ -65,9 +74,9 @@ info() {
 run_sql() {
     local sql="$1"
     if [ -n "$DB_PASS" ]; then
-        "$MYSQL_CMD" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" -e "$sql" 2>/dev/null
+        "$MYSQL_CMD" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" -N -s -e "$sql" 2>/dev/null
     else
-        "$MYSQL_CMD" -u "$DB_USER" "$DB_NAME" -e "$sql" 2>/dev/null
+        "$MYSQL_CMD" -u "$DB_USER" "$DB_NAME" -N -s -e "$sql" 2>/dev/null
     fi
 }
 
@@ -122,6 +131,9 @@ echo "  audit_log:              $START_AUDIT"
 echo "  users:                  $START_USERS"
 echo "  stock_checksum (SUM):   $START_STOCK"
 
+CREATED_ORDER_IDS=()
+CREATED_USER_IDS=()
+
 CLEANED_ALREADY=0
 
 cleanup() {
@@ -133,45 +145,48 @@ cleanup() {
     info "CLEANUP & HYGIENE AUDIT: Purging all throwaway test artifacts and checking parity"
 
     # Revert any test stock movements on variants before deleting test orders
-    run_sql "
-        -- Restore any variant stock deducted by test orders that was not cancelled
-        UPDATE product_variants pv
-        JOIN (
-            SELECT oi.variant_id, SUM(oi.quantity) as test_qty
-            FROM order_items oi
-            JOIN orders o ON oi.order_id = o.id
-            WHERE o.order_number LIKE '%${RAND_ID}%' AND o.stock_released = 0
-            GROUP BY oi.variant_id
-        ) sub ON pv.id = sub.variant_id
-        SET pv.stock_qty = pv.stock_qty + sub.test_qty;
-    " >/dev/null 2>&1 || true
+    if [ -f "$TMP_DIR/created_orders.txt" ]; then
+        local order_ids_csv
+        order_ids_csv=$(grep -E '^[0-9]+$' "$TMP_DIR/created_orders.txt" | tr '\n' ',' | sed 's/,$//')
+        if [ -n "$order_ids_csv" ]; then
+            run_sql "
+                UPDATE product_variants pv
+                JOIN (
+                    SELECT oi.variant_id, SUM(oi.quantity) as test_qty
+                    FROM order_items oi
+                    JOIN orders o ON oi.order_id = o.id
+                    WHERE o.id IN ($order_ids_csv) AND o.stock_released = 0
+                    GROUP BY oi.variant_id
+                ) sub ON pv.id = sub.variant_id
+                SET pv.stock_qty = pv.stock_qty + sub.test_qty;
 
-    # Delete throwaway records
-    run_sql "
-        DELETE im FROM inventory_movements im
-        JOIN orders o ON im.order_id = o.id
-        WHERE o.order_number LIKE '%${RAND_ID}%';
+                DELETE FROM inventory_movements WHERE order_id IN ($order_ids_csv);
+                DELETE FROM payments WHERE order_id IN ($order_ids_csv);
+                DELETE FROM order_status_history WHERE order_id IN ($order_ids_csv);
+                DELETE FROM order_items WHERE order_id IN ($order_ids_csv);
+                DELETE FROM orders WHERE id IN ($order_ids_csv);
+            " >/dev/null 2>&1 || true
+        fi
+    fi
 
-        DELETE p FROM payments p
-        JOIN orders o ON p.order_id = o.id
-        WHERE o.order_number LIKE '%${RAND_ID}%';
+    if [ ${#CREATED_USER_IDS[@]} -gt 0 ]; then
+        local u_csv
+        u_csv=$(IFS=,; echo "${CREATED_USER_IDS[*]}")
+        run_sql "DELETE FROM users WHERE id IN ($u_csv);" >/dev/null 2>&1 || true
+    fi
+    run_sql "DELETE FROM login_attempts WHERE identifier IN ('$ADMIN_EMAIL', '$STAFF_EMAIL', '$CUST_EMAIL');" >/dev/null 2>&1 || true
 
-        DELETE h FROM order_status_history h
-        JOIN orders o ON h.order_id = o.id
-        WHERE o.order_number LIKE '%${RAND_ID}%';
+    local created_emails
+    created_emails=$(run_sql "SELECT id FROM email_queue WHERE id > $START_MAX_EMAIL_ID;" | grep -E '^[0-9]+$' | tr '\n' ',' | sed 's/,$//')
+    if [ -n "$created_emails" ]; then
+        run_sql "DELETE FROM email_queue WHERE id IN ($created_emails);" >/dev/null 2>&1 || true
+    fi
 
-        DELETE oi FROM order_items oi
-        JOIN orders o ON oi.order_id = o.id
-        WHERE o.order_number LIKE '%${RAND_ID}%';
-
-        DELETE FROM orders WHERE order_number LIKE '%${RAND_ID}%';
-
-        DELETE FROM email_queue WHERE id > $START_MAX_EMAIL_ID OR to_email LIKE '%${RAND_ID}%';
-
-        DELETE FROM users WHERE email LIKE '%@test.local' OR email LIKE '%${RAND_ID}%';
-        DELETE FROM login_attempts WHERE identifier LIKE '%@test.local' OR identifier LIKE '%${RAND_ID}%';
-        DELETE FROM audit_log WHERE id > $START_MAX_AUDIT_ID OR details LIKE '%${RAND_ID}%';
-    " >/dev/null 2>&1 || true
+    local created_audits
+    created_audits=$(run_sql "SELECT id FROM audit_log WHERE id > $START_MAX_AUDIT_ID;" | grep -E '^[0-9]+$' | tr '\n' ',' | sed 's/,$//')
+    if [ -n "$created_audits" ]; then
+        run_sql "DELETE FROM audit_log WHERE id IN ($created_audits);" >/dev/null 2>&1 || true
+    fi
 
     rm -rf "$TMP_DIR"
 
@@ -185,6 +200,8 @@ cleanup() {
     END_USERS=$(run_sql "SELECT COUNT(*) FROM users;" | tail -n 1)
     END_STOCK=$(run_sql "SELECT SUM(stock_qty) FROM product_variants;" | tail -n 1)
     END_VARIANTS=$(run_sql "SELECT COUNT(*) FROM product_variants;" | tail -n 1)
+    END_PRODUCTS=$(run_sql "SELECT COUNT(*) FROM products;" | tail -n 1)
+    END_CATEGORIES=$(run_sql "SELECT COUNT(*) FROM categories;" | tail -n 1)
 
     echo "Final resource counts vs baseline:"
     echo "  orders:                 $END_ORDERS (start: $START_ORDERS)"
@@ -196,7 +213,9 @@ cleanup() {
     echo "  audit_log:              $END_AUDIT (start: $START_AUDIT)"
     echo "  users:                  $END_USERS (start: $START_USERS)"
     echo "  stock_checksum (SUM):   $END_STOCK (start: $START_STOCK)"
+    echo "  products:               $END_PRODUCTS (expected: 21)"
     echo "  product_variants:       $END_VARIANTS (expected: 66)"
+    echo "  categories:             $END_CATEGORIES (expected: 7)"
 
     local drift=0
     [ "$END_ORDERS" -eq "$START_ORDERS" ] || drift=1
@@ -208,10 +227,15 @@ cleanup() {
     [ "$END_AUDIT" -eq "$START_AUDIT" ] || drift=1
     [ "$END_USERS" -eq "$START_USERS" ] || drift=1
     [ "$END_STOCK" -eq "$START_STOCK" ] || drift=1
+    [ "$END_PRODUCTS" -eq 21 ] || drift=1
     [ "$END_VARIANTS" -eq 66 ] || drift=1
+    [ "$END_CATEGORIES" -eq 7 ] || drift=1
 
     if [ "$drift" -eq 0 ]; then
-        pass "Zero database drift verified: all 10 tracked resource counts match baseline perfectly."
+        pass "Zero database drift verified: all tracked resource counts match baseline perfectly."
+        pass "Products count verified: exactly 21 products in database."
+        pass "Variants count verified: exactly 66 variants in database."
+        pass "Categories count verified: exactly 7 categories in database."
     else
         fail "Database drift detected! Pre-test and post-cleanup counts do not match."
     fi
@@ -246,6 +270,7 @@ run_sql "
 ADMIN_USER_ID=$(run_sql "SELECT id FROM users WHERE email='${ADMIN_EMAIL}';" | tail -n 1)
 STAFF_USER_ID=$(run_sql "SELECT id FROM users WHERE email='${STAFF_EMAIL}';" | tail -n 1)
 CUST_USER_ID=$(run_sql "SELECT id FROM users WHERE email='${CUST_EMAIL}';" | tail -n 1)
+CREATED_USER_IDS+=("$ADMIN_USER_ID" "$STAFF_USER_ID" "$CUST_USER_ID")
 
 if [ -n "$ADMIN_USER_ID" ] && [ -n "$STAFF_USER_ID" ] && [ -n "$CUST_USER_ID" ]; then
     pass "Throwaway accounts created: Admin ID #$ADMIN_USER_ID, Staff ID #$STAFF_USER_ID, Customer ID #$CUST_USER_ID"
@@ -524,6 +549,7 @@ create_test_order() {
         echo "ERROR creating test order ($ord_num): $out" >&2
         exit 1
     fi
+    echo "$oid" >> "$TMP_DIR/created_orders.txt"
     echo "$oid"
 }
 
@@ -998,6 +1024,7 @@ CUST_XSS_ID=$("$PHP_CMD" -r "
     \$stmt->execute();
     echo \$pdo->lastInsertId();
 ")
+CREATED_USER_IDS+=("$CUST_XSS_ID")
 
 ORD_XSS=$(create_test_order 'pending_payment' 'unpaid' 'XSS')
 "$PHP_CMD" -r "
@@ -1256,11 +1283,12 @@ else
     fail "Customer list missing directory title"
 fi
 
-# Verify Admin/Staff accounts are excluded from customer list
-if echo "$CUST_LIST_HTML" | grep -q "$ADMIN_EMAIL" || echo "$CUST_LIST_HTML" | grep -q "$STAFF_EMAIL"; then
-    fail "Admin or staff accounts incorrectly listed in customer directory!"
+# Verify Admin/Staff accounts are excluded from customer table directory
+CUST_TABLE_BODY=$(echo "$CUST_LIST_HTML" | sed -n '/<tbody>/,/<\/tbody>/p')
+if echo "$CUST_TABLE_BODY" | grep -q "$ADMIN_EMAIL" || echo "$CUST_TABLE_BODY" | grep -q "$STAFF_EMAIL"; then
+    fail "Admin or staff accounts incorrectly listed in customer directory table!"
 else
-    pass "Admin and staff accounts excluded from customer directory."
+    pass "Admin and staff accounts excluded from customer directory table."
 fi
 
 # Customer Block & Unblock via POST

@@ -4,8 +4,6 @@
 -- This script inserts 12 realistic orders for testing the Phase 2A admin dashboard.
 -- ==============================================================================
 
-USE `shopwise_db`;
-
 START TRANSACTION;
 
 -- Clean up any existing demo orders first to ensure idempotency

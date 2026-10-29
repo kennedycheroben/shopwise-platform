@@ -92,28 +92,63 @@ final class SettingService
             throw new InvalidArgumentException("Business hours cannot be empty.");
         }
 
+        $returnWindowDays = filter_var($data['return_window_days'] ?? 7, FILTER_VALIDATE_INT);
+        if ($returnWindowDays === false || $returnWindowDays < 1 || $returnWindowDays > 90) {
+            throw new InvalidArgumentException("Return window days must be an integer between 1 and 90.");
+        }
+
+        $refundProcessingDays = filter_var($data['refund_processing_days'] ?? 7, FILTER_VALIDATE_INT);
+        if ($refundProcessingDays === false || $refundProcessingDays < 1 || $refundProcessingDays > 30) {
+            throw new InvalidArgumentException("Refund processing days must be an integer between 1 and 30.");
+        }
+
+        $supportResponseHours = filter_var($data['support_response_hours'] ?? 24, FILTER_VALIDATE_INT);
+        if ($supportResponseHours === false || $supportResponseHours < 1 || $supportResponseHours > 168) {
+            throw new InvalidArgumentException("Support response hours must be an integer between 1 and 168.");
+        }
+
+        $notifyEmail = trim($data['contact_form_notify_email'] ?? $email);
+        if ($notifyEmail === '' || !filter_var($notifyEmail, FILTER_VALIDATE_EMAIL)) {
+            throw new InvalidArgumentException("A valid contact form notification email address is required.");
+        }
+
         $current = self::getAll();
         $before = [
-            'store_name'     => $current['store_name'] ?? '',
-            'store_tagline'  => $current['store_tagline'] ?? '',
-            'support_email'  => $current['support_email'] ?? '',
-            'support_phone'  => $current['support_phone'] ?? '',
-            'pickup_address' => $current['pickup_address'] ?? '',
-            'business_hours' => $current['business_hours'] ?? '',
+            'store_name'                => $current['store_name'] ?? '',
+            'store_tagline'             => $current['store_tagline'] ?? '',
+            'support_email'             => $current['support_email'] ?? '',
+            'support_phone'             => $current['support_phone'] ?? '',
+            'pickup_address'            => $current['pickup_address'] ?? '',
+            'business_hours'            => $current['business_hours'] ?? '',
+            'return_window_days'        => (int)($current['return_window_days'] ?? 7),
+            'refund_processing_days'    => (int)($current['refund_processing_days'] ?? 7),
+            'support_response_hours'    => (int)($current['support_response_hours'] ?? 24),
+            'contact_form_notify_email' => $current['contact_form_notify_email'] ?? ($current['support_email'] ?? ''),
         ];
 
         $after = [
-            'store_name'     => $storeName,
-            'store_tagline'  => $tagline,
-            'support_email'  => $email,
-            'support_phone'  => $formattedPhone,
-            'pickup_address' => $pickupAddress,
-            'business_hours' => $businessHours,
+            'store_name'                => $storeName,
+            'store_tagline'             => $tagline,
+            'support_email'             => $email,
+            'support_phone'             => $formattedPhone,
+            'pickup_address'            => $pickupAddress,
+            'business_hours'            => $businessHours,
+            'return_window_days'        => $returnWindowDays,
+            'refund_processing_days'    => $refundProcessingDays,
+            'support_response_hours'    => $supportResponseHours,
+            'contact_form_notify_email' => $notifyEmail,
         ];
 
-        foreach ($after as $k => $v) {
-            self::set($k, $v);
-        }
+        self::set('store_name', $storeName, 'string');
+        self::set('store_tagline', $tagline, 'string');
+        self::set('support_email', $email, 'string');
+        self::set('support_phone', $formattedPhone, 'string');
+        self::set('pickup_address', $pickupAddress, 'string');
+        self::set('business_hours', $businessHours, 'string');
+        self::set('return_window_days', $returnWindowDays, 'integer');
+        self::set('refund_processing_days', $refundProcessingDays, 'integer');
+        self::set('support_response_hours', $supportResponseHours, 'integer');
+        self::set('contact_form_notify_email', $notifyEmail, 'string');
 
         AuditLogger::log($actorId, 'settings_update', 'settings', null, [
             'before' => $before,

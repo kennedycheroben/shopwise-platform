@@ -18,7 +18,7 @@ set -uo pipefail
 # ------------------------------------------------------------------------------
 # 0. Setup and Configuration
 # ------------------------------------------------------------------------------
-BASE_URL="${BASE_URL:-http://localhost/shopwise-platform/public}"
+BASE_URL="${BASE_URL:-http://127.0.0.1/shopwise-platform/public}"
 BASE_URL="${BASE_URL%/}"
 ROOT_URL="${BASE_URL%/public}"
 
@@ -29,10 +29,31 @@ fi
 
 DB_USER="${DB_USER:-root}"
 DB_PASS="${DB_PASS:-}"
-DB_NAME="${DB_NAME:-shopwise_db}"
+DB_NAME="${DB_NAME:-shopwise_test}"
 
-ADMIN_EMAIL="${ADMIN_EMAIL:-}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
+if [ "$DB_NAME" = "shopwise_db" ]; then
+    echo -e "\033[0;31mFATAL: Refusing to run tests against protected database '$DB_NAME'!\033[0m" >&2
+    exit 1
+fi
+if [[ ! "$DB_NAME" =~ _test$ ]]; then
+    echo -e "\033[0;31mFATAL: Test database name must end with '_test', got '$DB_NAME'!\033[0m" >&2
+    exit 1
+fi
+
+RAND_ID=$(head /dev/urandom | tr -dc a-z0-9 | head -c 8)
+ADMIN_EMAIL="${ADMIN_EMAIL:-test_admin_${RAND_ID}@test.local}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-TestAdminPass_${RAND_ID}!@#}"
+CUST_EMAIL="${CUSTOMER_EMAIL:-test_cust_${RAND_ID}@test.local}"
+CUST_PASS="${CUSTOMER_PASSWORD:-TestCustPass_${RAND_ID}!@#}"
+STAFF_EMAIL="${STAFF_EMAIL:-test_staff_${RAND_ID}@test.local}"
+STAFF_PASS="${STAFF_PASSWORD:-TestStaffPass_${RAND_ID}!@#}"
+
+for em in "$ADMIN_EMAIL" "$CUST_EMAIL" "$STAFF_EMAIL"; do
+    if [[ "$em" != *@test.local ]]; then
+        echo -e "\033[0;31mFATAL: Test email '$em' does not end with @test.local. Aborting immediately!\033[0m"
+        exit 1
+    fi
+done
 
 # Colors
 GREEN='\033[0;32m'
@@ -63,17 +84,6 @@ info() {
     echo -e "\n${BOLD}${CYAN}=== $1 ===${NC}"
 }
 
-if [ -z "$ADMIN_EMAIL" ] || [ -z "$ADMIN_PASSWORD" ]; then
-    echo -e "${RED}ERROR: Missing required credentials.${NC}"
-    echo "Usage: ADMIN_EMAIL=<email> ADMIN_PASSWORD=<password> [BASE_URL=<url>] $0"
-    exit 1
-fi
-
-if [[ "$ADMIN_EMAIL" != *@test.local ]]; then
-    echo -e "${RED}FATAL: ADMIN_EMAIL '$ADMIN_EMAIL' must end with @test.local. Aborting immediately!${NC}"
-    exit 1
-fi
-
 COOKIE_JAR=$(mktemp)
 BODY_FILE=$(mktemp)
 HEADER_FILE=$(mktemp)
@@ -92,16 +102,37 @@ run_sql() {
     fi
 }
 
+PHP_BIN="/opt/lampp/bin/php"
+if [ ! -x "$PHP_BIN" ]; then
+    PHP_BIN="php"
+fi
+
+# Auto-provision throwaway admin user in database
+ADMIN_HASH=$("$PHP_BIN" -r "echo password_hash('$ADMIN_PASSWORD', PASSWORD_DEFAULT);")
+run_sql "INSERT INTO users (role, first_name, last_name, email, password_hash, status, created_at, email_verified_at) VALUES ('admin', 'TestAdmin', '2AFix', '$ADMIN_EMAIL', '$ADMIN_HASH', 'active', NOW(), NOW());"
+ADMIN_USER_ID=$(run_sql "SELECT id FROM users WHERE email='$ADMIN_EMAIL' LIMIT 1;" | tail -n 1)
+CUST_USER_ID=""
+STAFF_USER_ID=""
+
 KEEP_TEST_USERS="${KEEP_TEST_USERS:-0}"
 
 cleanup() {
-    rm -f "$COOKIE_JAR" "$BODY_FILE" "$HEADER_FILE" "$COOKIE_JAR"* "$BODY_FILE"* "$HEADER_FILE"*
+    rm -f "$COOKIE_JAR" "$BODY_FILE" "$HEADER_FILE"
+    if [ -n "${CUST_JAR:-}" ]; then rm -f "$CUST_JAR"*; fi
+    if [ -n "${STAFF_JAR:-}" ]; then rm -f "$STAFF_JAR"*; fi
+    if [ -n "${LOCKOUT_JAR:-}" ]; then rm -f "$LOCKOUT_JAR"*; fi
     # Clean up test users and login attempts from DB if not preserved for further steps
     if [ "$KEEP_TEST_USERS" != "1" ]; then
-        run_sql "DELETE FROM users WHERE email LIKE '%@test.local' OR email LIKE 'acceptance_%'; DELETE FROM login_attempts WHERE identifier LIKE '%@test.local' OR identifier LIKE 'acceptance_%';" >/dev/null 2>&1 || true
-    else
-        # Only clean up lockout probe attempts so normal accounts are unaffected
-        run_sql "DELETE FROM login_attempts WHERE identifier = '$LOCKOUT_ID';" >/dev/null 2>&1 || true
+        local user_ids=()
+        [ -n "${ADMIN_USER_ID:-}" ] && user_ids+=("$ADMIN_USER_ID")
+        [ -n "${CUST_USER_ID:-}" ] && user_ids+=("$CUST_USER_ID")
+        [ -n "${STAFF_USER_ID:-}" ] && user_ids+=("$STAFF_USER_ID")
+        if [ ${#user_ids[@]} -gt 0 ]; then
+            local id_csv
+            id_csv=$(IFS=,; echo "${user_ids[*]}")
+            run_sql "DELETE FROM users WHERE id IN ($id_csv);" >/dev/null 2>&1 || true
+        fi
+        run_sql "DELETE FROM login_attempts WHERE identifier IN ('$ADMIN_EMAIL', '$CUST_EMAIL', '$STAFF_EMAIL', '${LOCKOUT_ID:-}');" >/dev/null 2>&1 || true
     fi
 }
 trap cleanup EXIT
@@ -465,14 +496,11 @@ if [ "$DB_AVAILABLE" -eq 1 ]; then
     pass "Connected to MariaDB ($DB_NAME) for role and permission tests"
 
     # 2. Customer-role account cannot log in to admin
-    CUST_EMAIL="${CUSTOMER_EMAIL:-acceptance-customer@test.local}"
-    CUST_PASS="${CUSTOMER_PASSWORD:-$ADMIN_PASSWORD}"
-    CUST_HASH=$(php -r "echo password_hash('$CUST_PASS', PASSWORD_DEFAULT);")
+    CUST_HASH=$("$PHP_BIN" -r "echo password_hash('$CUST_PASS', PASSWORD_DEFAULT);")
 
     # Ensure user exists as active customer
-    if ! run_sql "SELECT id FROM users WHERE email='$CUST_EMAIL' AND role='customer' LIMIT 1;" 2>/dev/null | grep -q '[0-9]'; then
-        run_sql "DELETE FROM users WHERE email='$CUST_EMAIL'; INSERT INTO users (role, first_name, last_name, email, password_hash, status, created_at) VALUES ('customer', 'Customer', 'Tester', '$CUST_EMAIL', '$CUST_HASH', 'active', NOW());"
-    fi
+    run_sql "INSERT INTO users (role, first_name, last_name, email, password_hash, status, created_at) VALUES ('customer', 'Customer', 'Tester', '$CUST_EMAIL', '$CUST_HASH', 'active', NOW());"
+    CUST_USER_ID=$(run_sql "SELECT id FROM users WHERE email='$CUST_EMAIL' LIMIT 1;" | tail -n 1)
 
     CUST_JAR=$(mktemp)
     fetch_url "$BASE_URL/admin/login.php" "$CUST_JAR"
@@ -493,14 +521,11 @@ if [ "$DB_AVAILABLE" -eq 1 ]; then
     rm -f "$CUST_JAR"*
 
     # 3. Staff account cannot reach admin-only ability
-    STAFF_EMAIL="${STAFF_EMAIL:-acceptance-staff@test.local}"
-    STAFF_PASS="${STAFF_PASSWORD:-$ADMIN_PASSWORD}"
-    STAFF_HASH=$(php -r "echo password_hash('$STAFF_PASS', PASSWORD_DEFAULT);")
+    STAFF_HASH=$("$PHP_BIN" -r "echo password_hash('$STAFF_PASS', PASSWORD_DEFAULT);")
 
     # Ensure user exists as active staff
-    if ! run_sql "SELECT id FROM users WHERE email='$STAFF_EMAIL' AND role='staff' LIMIT 1;" 2>/dev/null | grep -q '[0-9]'; then
-        run_sql "DELETE FROM users WHERE email='$STAFF_EMAIL'; INSERT INTO users (role, first_name, last_name, email, password_hash, status, created_at) VALUES ('staff', 'Staff', 'Tester', '$STAFF_EMAIL', '$STAFF_HASH', 'active', NOW());"
-    fi
+    run_sql "INSERT INTO users (role, first_name, last_name, email, password_hash, status, created_at) VALUES ('staff', 'Staff', 'Tester', '$STAFF_EMAIL', '$STAFF_HASH', 'active', NOW());"
+    STAFF_USER_ID=$(run_sql "SELECT id FROM users WHERE email='$STAFF_EMAIL' LIMIT 1;" | tail -n 1)
 
     STAFF_JAR=$(mktemp)
     fetch_url "$BASE_URL/admin/login.php" "$STAFF_JAR"
@@ -527,14 +552,39 @@ if [ "$DB_AVAILABLE" -eq 1 ]; then
         fail "Staff login failed (HTTP $HTTP_CODE)"
     fi
     if [ "$KEEP_TEST_USERS" != "1" ]; then
-        run_sql "DELETE FROM users WHERE email='$STAFF_EMAIL'; DELETE FROM login_attempts WHERE identifier='$STAFF_EMAIL';"
+        local user_ids=()
+        [ -n "${ADMIN_USER_ID:-}" ] && user_ids+=("$ADMIN_USER_ID")
+        [ -n "${CUST_USER_ID:-}" ] && user_ids+=("$CUST_USER_ID")
+        [ -n "${STAFF_USER_ID:-}" ] && user_ids+=("$STAFF_USER_ID")
+        if [ ${#user_ids[@]} -gt 0 ]; then
+            local id_csv
+            id_csv=$(IFS=,; echo "${user_ids[*]}")
+            run_sql "DELETE FROM users WHERE id IN ($id_csv);" >/dev/null 2>&1 || true
+        fi
+        run_sql "DELETE FROM login_attempts WHERE identifier IN ('$ADMIN_EMAIL', '$CUST_EMAIL', '$STAFF_EMAIL');" >/dev/null 2>&1 || true
     fi
-# Verify variants count
+fi
+
+# Verify catalog counts
+PROD_COUNT=$(run_sql "SELECT COUNT(*) FROM products;" | tail -n 1)
+if [ "$PROD_COUNT" -eq 21 ]; then
+    pass "Products count verified: exactly 21 products in database."
+else
+    fail "Products count mismatch: expected 21, got $PROD_COUNT"
+fi
+
 VAR_COUNT=$(run_sql "SELECT COUNT(*) FROM product_variants;" | tail -n 1)
 if [ "$VAR_COUNT" -eq 66 ]; then
     pass "Variants count verified: exactly 66 variants in database."
 else
     fail "Variants count mismatch: expected 66, got $VAR_COUNT"
+fi
+
+CAT_COUNT=$(run_sql "SELECT COUNT(*) FROM categories;" | tail -n 1)
+if [ "$CAT_COUNT" -eq 7 ]; then
+    pass "Categories count verified: exactly 7 categories in database."
+else
+    fail "Categories count mismatch: expected 7, got $CAT_COUNT"
 fi
 
 

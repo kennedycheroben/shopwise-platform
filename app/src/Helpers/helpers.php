@@ -44,7 +44,7 @@ function url(string $path = ''): string
         $baseUrl = rtrim($config['app']['base_url'] ?? '', '/');
     }
     $path = ltrim($path, '/');
-    return $path !== '' ? "{$baseUrl}/{$path}" : $baseUrl;
+    return $path !== '' ? "{$baseUrl}/{$path}" : "{$baseUrl}/";
 }
 
 /**
@@ -85,7 +85,12 @@ function product_image_url(?string $path, string $default = 'assets/img/product/
     if (str_starts_with($path, 'http://') || str_starts_with($path, 'https://')) {
         return $path;
     }
-    return asset(ltrim($path, '/'));
+    $cleanPath = ltrim($path, '/');
+    $publicDir = dirname(__DIR__, 2) . '/public';
+    if (!file_exists($publicDir . '/' . $cleanPath)) {
+        return asset($default);
+    }
+    return asset($cleanPath);
 }
 
 /**
@@ -115,7 +120,7 @@ function csrf_verify(?string $token = null): bool
         session_start();
     }
     if ($token === null) {
-        $token = $_POST['_csrf_token'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? null;
+        $token = $_POST['_csrf_token'] ?? $_POST['csrf_token'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? null;
     }
     if (empty($token) || empty($_SESSION['_csrf_token'])) {
         return false;
@@ -204,6 +209,14 @@ function format_money(string|int|float|null $amount, bool $includeDecimals = fal
     $groupedWhole = preg_replace('/\B(?=(\d{3})+(?!\d))/', ',', $whole);
 
     return 'KES ' . $sign . $groupedWhole . ($includeDecimals || $fraction !== '00' ? '.' . $fraction : '');
+}
+
+/**
+ * Format currency in Kenyan Shillings (alias for format_money)
+ */
+function format_kes(string|int|float|null $amount, bool $includeDecimals = false): string
+{
+    return format_money($amount, $includeDecimals);
 }
 
 /**

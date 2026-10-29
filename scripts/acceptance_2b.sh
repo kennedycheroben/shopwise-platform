@@ -15,7 +15,7 @@
 
 set -uo pipefail
 
-BASE_URL="${BASE_URL:-http://localhost/shopwise-platform/public}"
+BASE_URL="${BASE_URL:-http://127.0.0.1/shopwise-platform/public}"
 BASE_URL="${BASE_URL%/}"
 MYSQL_CMD="${MYSQL_CMD:-/opt/lampp/bin/mysql}"
 if [ ! -x "$MYSQL_CMD" ]; then
@@ -24,7 +24,16 @@ fi
 
 DB_USER="${DB_USER:-root}"
 DB_PASS="${DB_PASS:-}"
-DB_NAME="${DB_NAME:-shopwise_db}"
+DB_NAME="${DB_NAME:-shopwise_test}"
+
+if [ "$DB_NAME" = "shopwise_db" ]; then
+    echo -e "\033[0;31mFATAL: Refusing to run tests against protected database '$DB_NAME'!\033[0m" >&2
+    exit 1
+fi
+if [[ ! "$DB_NAME" =~ _test$ ]]; then
+    echo -e "\033[0;31mFATAL: Test database name must end with '_test', got '$DB_NAME'!\033[0m" >&2
+    exit 1
+fi
 
 # Colors
 GREEN='\033[0;32m'
@@ -55,9 +64,9 @@ info() {
 run_sql() {
     local sql="$1"
     if [ -n "$DB_PASS" ]; then
-        "$MYSQL_CMD" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" -e "$sql" 2>/dev/null
+        "$MYSQL_CMD" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" -N -s -e "$sql" 2>/dev/null
     else
-        "$MYSQL_CMD" -u "$DB_USER" "$DB_NAME" -e "$sql" 2>/dev/null
+        "$MYSQL_CMD" -u "$DB_USER" "$DB_NAME" -N -s -e "$sql" 2>/dev/null
     fi
 }
 
@@ -110,6 +119,10 @@ echo "  audit_log:           $START_AUDIT"
 echo "  users:               $START_USERS"
 echo "  upload files:        $START_UPLOAD_FILES"
 
+CREATED_PRODUCT_IDS=()
+CREATED_CATEGORY_IDS=()
+CREATED_USER_IDS=()
+
 CLEANED_ALREADY=0
 
 cleanup() {
@@ -121,37 +134,53 @@ cleanup() {
     info "CLEANUP & HYGIENE AUDIT: Purging all test artifacts and verifying parity"
 
     # 1. Delete physical image files created during the run for test products
-    local test_img_paths
-    test_img_paths=($(run_sql "SELECT path FROM product_images WHERE product_id IN (SELECT id FROM products WHERE name LIKE '%${RAND_ID}%' OR slug LIKE '%${RAND_ID}%');" | tr '\n' ' '))
-    for p in "${test_img_paths[@]}"; do
-        if [ -n "$p" ] && [[ "$p" == uploads/* ]]; then
-            local full_path="/opt/lampp/htdocs/shopwise-platform/public/$p"
-            local thumb_path=$(echo "$full_path" | sed -E 's/(\.[a-zA-Z0-9]+)$/_thumb\1/')
-            rm -f "$full_path" "$thumb_path"
-        fi
-    done
+    if [ ${#CREATED_PRODUCT_IDS[@]} -gt 0 ]; then
+        local prod_csv
+        prod_csv=$(IFS=,; echo "${CREATED_PRODUCT_IDS[*]}")
+        local test_img_paths
+        test_img_paths=($(run_sql "SELECT path FROM product_images WHERE product_id IN ($prod_csv);" | tr '\n' ' '))
+        for p in "${test_img_paths[@]}"; do
+            if [ -n "$p" ] && [[ "$p" == uploads/* ]]; then
+                local full_path="/opt/lampp/htdocs/shopwise-platform/public/$p"
+                local thumb_path=$(echo "$full_path" | sed -E 's/(\.[a-zA-Z0-9]+)$/_thumb\1/')
+                rm -f "$full_path" "$thumb_path"
+            fi
+        done
+    fi
 
-    # 2. Delete test records from DB
-    run_sql "
-        DELETE im FROM inventory_movements im 
-        JOIN product_variants pv ON im.variant_id = pv.id 
-        JOIN products p ON pv.product_id = p.id 
-        WHERE p.name LIKE '%${RAND_ID}%' OR p.slug LIKE '%${RAND_ID}%';
+    # 2. Delete test records from DB strictly by recorded IDs
+    if [ ${#CREATED_PRODUCT_IDS[@]} -gt 0 ]; then
+        local prod_csv
+        prod_csv=$(IFS=,; echo "${CREATED_PRODUCT_IDS[*]}")
+        run_sql "
+            DELETE im FROM inventory_movements im 
+            JOIN product_variants pv ON im.variant_id = pv.id 
+            WHERE pv.product_id IN ($prod_csv);
 
-        DELETE pi FROM product_images pi
-        JOIN products p ON pi.product_id = p.id
-        WHERE p.name LIKE '%${RAND_ID}%' OR p.slug LIKE '%${RAND_ID}%';
+            DELETE FROM product_images WHERE product_id IN ($prod_csv);
+            DELETE FROM product_variants WHERE product_id IN ($prod_csv);
+            DELETE FROM products WHERE id IN ($prod_csv);
+        " >/dev/null 2>&1 || true
+    fi
 
-        DELETE pv FROM product_variants pv
-        JOIN products p ON pv.product_id = p.id
-        WHERE p.name LIKE '%${RAND_ID}%' OR p.slug LIKE '%${RAND_ID}%' OR p.name LIKE 'PermTest_%' OR p.slug LIKE 'permtest-%';
+    if [ ${#CREATED_CATEGORY_IDS[@]} -gt 0 ]; then
+        local cat_csv
+        cat_csv=$(IFS=,; echo "${CREATED_CATEGORY_IDS[*]}")
+        run_sql "DELETE FROM categories WHERE id IN ($cat_csv);" >/dev/null 2>&1 || true
+    fi
 
-        DELETE FROM products WHERE name LIKE '%${RAND_ID}%' OR slug LIKE '%${RAND_ID}%' OR name LIKE 'PermTest_%' OR slug LIKE 'permtest-%';
-        DELETE FROM categories WHERE name LIKE '%${RAND_ID}%' OR slug LIKE '%${RAND_ID}%' OR name LIKE 'PermCat_%' OR slug LIKE 'permcat-%';
-        DELETE FROM users WHERE email LIKE '%@test.local' OR email LIKE '%${RAND_ID}%';
-        DELETE FROM login_attempts WHERE identifier LIKE '%@test.local' OR identifier LIKE '%${RAND_ID}%';
-        DELETE FROM audit_log WHERE id > $START_MAX_AUDIT_ID OR details LIKE '%${RAND_ID}%';
-    " >/dev/null 2>&1 || true
+    if [ ${#CREATED_USER_IDS[@]} -gt 0 ]; then
+        local u_csv
+        u_csv=$(IFS=,; echo "${CREATED_USER_IDS[*]}")
+        run_sql "DELETE FROM users WHERE id IN ($u_csv);" >/dev/null 2>&1 || true
+    fi
+    run_sql "DELETE FROM login_attempts WHERE identifier IN ('$ADMIN_EMAIL', '$STAFF_EMAIL', '$CUST_EMAIL');" >/dev/null 2>&1 || true
+
+    local created_audits
+    created_audits=$(run_sql "SELECT id FROM audit_log WHERE id > $START_MAX_AUDIT_ID;" | grep -E '^[0-9]+$' | tr '\n' ',' | sed 's/,$//')
+    if [ -n "$created_audits" ]; then
+        run_sql "DELETE FROM audit_log WHERE id IN ($created_audits);" >/dev/null 2>&1 || true
+    fi
 
     # 3. Clean orphan files under public/uploads/products/ not referenced by product_images
     ORPHANS_REMOVED=$(/opt/lampp/bin/php -r '
@@ -225,11 +254,25 @@ cleanup() {
     audit_check "users" "$START_USERS" "$END_USERS"
     audit_check "upload_files" "$START_UPLOAD_FILES" "$END_UPLOAD_FILES"
 
+    if [ "$END_PRODUCTS" -ne 21 ]; then
+        fail "Products count mismatch: expected 21, got $END_PRODUCTS"
+        any_diff=1
+    else
+        pass "Products count verified: exactly 21 products in database."
+    fi
+
     if [ "$END_VARIANTS" -ne 66 ]; then
         fail "Variants count mismatch: expected 66, got $END_VARIANTS"
         any_diff=1
     else
         pass "Variants count verified: exactly 66 variants in database."
+    fi
+
+    if [ "$END_CATEGORIES" -ne 7 ]; then
+        fail "Categories count mismatch: expected 7, got $END_CATEGORIES"
+        any_diff=1
+    else
+        pass "Categories count verified: exactly 7 categories in database."
     fi
 
     if [ "$any_diff" -eq 0 ]; then
@@ -332,6 +375,11 @@ VALUES
 ('staff', 'TestStaff', '2B', '$STAFF_EMAIL', '$HASHED_PASS', 'active', NOW()),
 ('customer', 'TestCustomer', '2B', '$CUST_EMAIL', '$HASHED_PASS', 'active', NOW());
 "
+
+ADMIN_USER_ID=$(run_sql "SELECT id FROM users WHERE email = '$ADMIN_EMAIL' LIMIT 1;" | tail -n 1)
+STAFF_USER_ID=$(run_sql "SELECT id FROM users WHERE email = '$STAFF_EMAIL' LIMIT 1;" | tail -n 1)
+CUST_USER_ID=$(run_sql "SELECT id FROM users WHERE email = '$CUST_EMAIL' LIMIT 1;" | tail -n 1)
+CREATED_USER_IDS+=("$ADMIN_USER_ID" "$STAFF_USER_ID" "$CUST_USER_ID")
 
 # Login function
 login_user() {
@@ -444,6 +492,7 @@ http_req "POST" "$BASE_URL/admin/products/create.php" "$COOKIE_ADMIN" \
     "application/x-www-form-urlencoded"
 
 PERM_PROD_ID=$(run_sql "SELECT id FROM products WHERE slug = '$PROD_SLUG' LIMIT 1;" | tail -n 1)
+CREATED_PRODUCT_IDS+=("$PERM_PROD_ID")
 
 # Staff attempts soft delete -> MUST return 403
 CSRF_STAFF=$(get_csrf_token "$COOKIE_STAFF" "$BASE_URL/admin/products/")
@@ -474,6 +523,7 @@ CAT_NAME="PermCat_${RAND_ID}"
 CAT_SLUG="permcat-${RAND_ID}"
 run_sql "INSERT INTO categories (name, slug, sort_order, is_active) VALUES ('$CAT_NAME', '$CAT_SLUG', 99, 1);"
 PERM_CAT_ID=$(run_sql "SELECT id FROM categories WHERE slug = '$CAT_SLUG' LIMIT 1;" | tail -n 1)
+CREATED_CATEGORY_IDS+=("$PERM_CAT_ID")
 
 http_req "POST" "$BASE_URL/admin/categories/" "$COOKIE_STAFF" \
     "_csrf_token=${CSRF_STAFF}&action=delete&id=${PERM_CAT_ID}" \
@@ -537,6 +587,7 @@ http_req "POST" "$BASE_URL/admin/products/create.php" "$COOKIE_ADMIN" \
     "application/x-www-form-urlencoded"
 
 MAIN_PROD_ID=$(run_sql "SELECT id FROM products WHERE slug = '$MAIN_PROD_SLUG' LIMIT 1;" | tail -n 1)
+CREATED_PRODUCT_IDS+=("$MAIN_PROD_ID")
 
 if [ -n "$MAIN_PROD_ID" ] && [ "$MAIN_PROD_ID" -gt 0 ]; then
     pass "Created product '${MAIN_PROD_NAME}' (ID: $MAIN_PROD_ID)."
@@ -887,6 +938,7 @@ VAL_CAT_NAME="ValCat_${RAND_ID}"
 VAL_CAT_SLUG="valcat-${RAND_ID}"
 run_sql "INSERT INTO categories (name, slug, sort_order, is_active) VALUES ('$VAL_CAT_NAME', '$VAL_CAT_SLUG', 99, 1);"
 VAL_CAT_ID=$(run_sql "SELECT id FROM categories WHERE slug = '$VAL_CAT_SLUG' LIMIT 1;" | tail -n 1)
+CREATED_CATEGORY_IDS+=("$VAL_CAT_ID")
 
 CSRF_ADMIN=$(get_csrf_token "$COOKIE_ADMIN" "$BASE_URL/admin/categories/")
 
@@ -918,6 +970,7 @@ http_req "POST" "$BASE_URL/admin/products/create.php" "$COOKIE_ADMIN" \
     "application/x-www-form-urlencoded"
 
 SINGLE_PROD_ID=$(run_sql "SELECT id FROM products WHERE slug = '$PROD_SINGLE_SLUG' LIMIT 1;" | tail -n 1)
+CREATED_PRODUCT_IDS+=("$SINGLE_PROD_ID")
 SINGLE_VAR_ID=$(run_sql "SELECT id FROM product_variants WHERE product_id = $SINGLE_PROD_ID LIMIT 1;" | tail -n 1)
 
 # Try deleting the only variant
@@ -962,8 +1015,9 @@ fi
 
 # Deactivating the order item variant should succeed
 ORDER_VAR_SKU=$(run_sql "SELECT sku FROM product_variants WHERE id = $ORDER_VAR_ID;" | tail -n 1)
+ORDER_VAR_STOCK=$(run_sql "SELECT stock_qty FROM product_variants WHERE id = $ORDER_VAR_ID;" | tail -n 1)
 http_req "POST" "$BASE_URL/admin/products/edit.php?id=$ORDER_VAR_PROD_ID" "$COOKIE_ADMIN" \
-    "_csrf_token=${CSRF_ADMIN}&action=variant_update&product_id=${ORDER_VAR_PROD_ID}&variant_id=${ORDER_VAR_ID}&sku=${ORDER_VAR_SKU}&stock_qty=10&low_stock_threshold=5" \
+    "_csrf_token=${CSRF_ADMIN}&action=variant_update&product_id=${ORDER_VAR_PROD_ID}&variant_id=${ORDER_VAR_ID}&sku=${ORDER_VAR_SKU}&stock_qty=${ORDER_VAR_STOCK}&low_stock_threshold=5" \
     "application/x-www-form-urlencoded"
 
 ORDER_VAR_ACTIVE=$(run_sql "SELECT is_active FROM product_variants WHERE id = $ORDER_VAR_ID;" | tail -n 1)
@@ -1116,6 +1170,7 @@ http_req "POST" "$BASE_URL/admin/products/create.php" "$COOKIE_ADMIN" \
     "application/x-www-form-urlencoded"
 
 XSS_PROD_ID=$(run_sql "SELECT id FROM products WHERE slug = '$XSS_SLUG' LIMIT 1;" | tail -n 1)
+CREATED_PRODUCT_IDS+=("$XSS_PROD_ID")
 
 # Check list page
 http_req "GET" "$BASE_URL/admin/products/?search=${XSS_SLUG}" "$COOKIE_ADMIN"

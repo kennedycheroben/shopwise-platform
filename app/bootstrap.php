@@ -133,3 +133,12 @@ if (session_status() === PHP_SESSION_NONE && php_sapi_name() !== 'cli') {
 
     session_start();
 }
+
+// 7. Search Engine Indexing Protection for Non-Production Environments
+if (php_sapi_name() !== 'cli' && !headers_sent()) {
+    $currentEnv = $appConfig['app']['environment'] ?? 'production';
+    if ($currentEnv !== 'production') {
+        header('X-Robots-Tag: noindex, nofollow', false);
+    }
+}
+

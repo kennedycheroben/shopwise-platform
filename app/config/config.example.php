@@ -33,11 +33,15 @@ return [
     ],
 
     'mpesa' => [
-        'env'                 => 'sandbox', // 'sandbox' or 'live'
+        // 'sandbox' or 'live'.
+        // NOTE: Safaricom's public Daraja sandbox passkey is bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919
+        // which is published in Safaricom's public documentation for testing.
+        // Production credentials go ONLY in config.local.php and must never be committed.
+        'env'                 => 'sandbox',
         'consumer_key'        => 'YOUR_MPESA_CONSUMER_KEY',
         'consumer_secret'     => 'YOUR_MPESA_CONSUMER_SECRET',
         'shortcode'           => '174379',  // Default Daraja sandbox Business Shortcode
-        'passkey'             => 'YOUR_MPESA_PASSKEY',
+        'passkey'             => 'YOUR_MPESA_PASSKEY', // Use public sandbox passkey for sandbox, live passkey in config.local.php
         'initiator_name'      => 'testapi',
         'callback_url'        => 'https://your-domain.co.ke/api/mpesa/callback.php',
         'transaction_type'    => 'CustomerPayBillOnline',
@@ -65,5 +69,17 @@ return [
         'allowed_extensions' => ['jpg', 'jpeg', 'png', 'webp'],
         'allowed_mimes'      => ['image/jpeg', 'image/png', 'image/webp'],
         'products_path'      => dirname(__DIR__, 2) . '/public/uploads/products',
+    ],
+
+    'rate_limits' => [
+        'cart_writes_per_session' => 60,
+        'cart_writes_per_ip'      => 300,
+        'contact_messages_per_ip' => 5, // 5 per hour per IP
+        'storage_dir'             => dirname(__DIR__, 2) . '/app/storage/rate_limits',
+    ],
+
+    'google' => [
+        'client_id'     => '', // e.g. 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com'
+        'client_secret' => '', // e.g. 'YOUR_GOOGLE_CLIENT_SECRET'
     ],
 ];

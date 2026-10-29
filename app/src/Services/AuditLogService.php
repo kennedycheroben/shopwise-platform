@@ -109,4 +109,19 @@ final class AuditLogService
         $stmt = $pdo->query("SELECT DISTINCT entity_type FROM audit_log ORDER BY entity_type ASC");
         return $stmt->fetchAll(PDO::FETCH_COLUMN);
     }
+
+    /**
+     * Get a single audit log entry by ID.
+     */
+    public static function get(int $id): ?array
+    {
+        if ($id <= 0) {
+            return null;
+        }
+        $pdo = Database::getInstance();
+        $stmt = $pdo->prepare("SELECT * FROM audit_log WHERE id = :id LIMIT 1");
+        $stmt->execute([':id' => $id]);
+        $res = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $res ?: null;
+    }
 }

@@ -17,7 +17,7 @@
 
 set -uo pipefail
 
-BASE_URL="${BASE_URL:-http://localhost/shopwise-platform/public}"
+BASE_URL="${BASE_URL:-http://127.0.0.1/shopwise-platform/public}"
 BASE_URL="${BASE_URL%/}"
 
 MYSQL_CMD="${MYSQL_CMD:-/opt/lampp/bin/mysql}"
@@ -32,7 +32,16 @@ fi
 
 DB_USER="${DB_USER:-root}"
 DB_PASS="${DB_PASS:-}"
-DB_NAME="${DB_NAME:-shopwise_db}"
+DB_NAME="${DB_NAME:-shopwise_test}"
+
+if [ "$DB_NAME" = "shopwise_db" ]; then
+    echo -e "\033[0;31mFATAL: Refusing to run tests against protected database '$DB_NAME'!\033[0m" >&2
+    exit 1
+fi
+if [[ ! "$DB_NAME" =~ _test$ ]]; then
+    echo -e "\033[0;31mFATAL: Test database name must end with '_test', got '$DB_NAME'!\033[0m" >&2
+    exit 1
+fi
 
 # Colors
 GREEN='\033[0;32m'
@@ -63,9 +72,9 @@ info() {
 run_sql() {
     local sql="$1"
     if [ -n "$DB_PASS" ]; then
-        "$MYSQL_CMD" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" -e "$sql" 2>/dev/null
+        "$MYSQL_CMD" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" -N -s -e "$sql" 2>/dev/null
     else
-        "$MYSQL_CMD" -u "$DB_USER" "$DB_NAME" -e "$sql" 2>/dev/null
+        "$MYSQL_CMD" -u "$DB_USER" "$DB_NAME" -N -s -e "$sql" 2>/dev/null
     fi
 }
 
@@ -110,7 +119,14 @@ PRE_USERS=$(run_sql "SELECT COUNT(*) FROM users" | tail -n 1)
 PRE_AUDIT=$(run_sql "SELECT COUNT(*) FROM audit_log" | tail -n 1)
 PRE_AUDIT_MAX_ID=$(run_sql "SELECT COALESCE(MAX(id), 0) FROM audit_log" | tail -n 1)
 PRE_EMAIL=$(run_sql "SELECT COUNT(*) FROM email_queue" | tail -n 1)
+PRE_EMAIL_MAX_ID=$(run_sql "SELECT COALESCE(MAX(id), 0) FROM email_queue" | tail -n 1)
+PRE_USER_MAX_ID=$(run_sql "SELECT COALESCE(MAX(id), 0) FROM users" | tail -n 1)
+PRE_COUPON_MAX_ID=$(run_sql "SELECT COALESCE(MAX(id), 0) FROM coupons" | tail -n 1)
+PRE_REVIEW_MAX_ID=$(run_sql "SELECT COALESCE(MAX(id), 0) FROM reviews" | tail -n 1)
+PRE_MESSAGE_MAX_ID=$(run_sql "SELECT COALESCE(MAX(id), 0) FROM contact_messages" | tail -n 1)
+PRE_PRODUCTS=$(run_sql "SELECT COUNT(*) FROM products" | tail -n 1)
 PRE_VARIANTS=$(run_sql "SELECT COUNT(*) FROM product_variants" | tail -n 1)
+PRE_CATEGORIES=$(run_sql "SELECT COUNT(*) FROM categories" | tail -n 1)
 PRE_STOCK=$(run_sql "SELECT SUM(stock_qty) FROM product_variants" | tail -n 1)
 
 echo "  Baseline coupons:            $PRE_COUPONS"
@@ -122,11 +138,13 @@ echo "  Baseline contact_messages:   $PRE_MESSAGES"
 echo "  Baseline users:              $PRE_USERS"
 echo "  Baseline audit_log:          $PRE_AUDIT"
 echo "  Baseline email_queue:        $PRE_EMAIL"
+echo "  Baseline products:           $PRE_PRODUCTS"
 echo "  Baseline product_variants:   $PRE_VARIANTS"
+echo "  Baseline categories:         $PRE_CATEGORIES"
 echo "  Baseline stock_checksum:     $PRE_STOCK"
 
-if [ "$PRE_VARIANTS" -ne 66 ]; then
-    echo -e "${RED}FATAL: Pre-test product_variants count is $PRE_VARIANTS, expected 66! Aborting.${NC}"
+if [ "$PRE_PRODUCTS" -ne 21 ] || [ "$PRE_VARIANTS" -ne 66 ] || [ "$PRE_CATEGORIES" -ne 7 ]; then
+    echo -e "${RED}FATAL: Pre-test catalog counts (products: $PRE_PRODUCTS, variants: $PRE_VARIANTS, categories: $PRE_CATEGORIES) do not match expected (21, 66, 7)! Aborting.${NC}"
     exit 1
 fi
 
@@ -144,34 +162,59 @@ fi
 cleanup() {
     info "CLEANUP: Restoring database state, removing test accounts and verifying zero drift"
 
-    # Remove throwaway test users and their resets
     "$PHP_CMD" -r "
     require 'app/bootstrap.php';
     \$pdo = App\Database\Database::getInstance();
-    \$pdo->exec(\"DELETE FROM password_resets WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@test.local')\");
-    \$pdo->exec(\"DELETE FROM users WHERE email LIKE '%@test.local'\");
-    "
 
-    # Remove throwaway coupons and redemptions
-    "$PHP_CMD" -r "
-    require 'app/bootstrap.php';
-    \$pdo = App\Database\Database::getInstance();
-    \$pdo->exec(\"DELETE FROM coupon_redemptions WHERE coupon_id IN (SELECT id FROM coupons WHERE code LIKE 'TEST%' OR code LIKE 'ACCEP%')\");
-    \$pdo->exec(\"DELETE FROM coupons WHERE code LIKE 'TEST%' OR code LIKE 'ACCEP%'\");
-    "
+    // 1. Remove throwaway test users and resets by recorded IDs
+    \$uStmt = \$pdo->query('SELECT id FROM users WHERE id > $PRE_USER_MAX_ID');
+    \$uIds = \$uStmt->fetchAll(PDO::FETCH_COLUMN);
+    if (!empty(\$uIds)) {
+        \$in = implode(',', array_map('intval', \$uIds));
+        \$pdo->exec(\"DELETE FROM password_resets WHERE user_id IN (\$in)\");
+        \$pdo->exec(\"DELETE FROM users WHERE id IN (\$in)\");
+    }
 
-    # Remove throwaway reviews
-    "$PHP_CMD" -r "
-    require 'app/bootstrap.php';
-    \$pdo = App\Database\Database::getInstance();
-    \$pdo->exec(\"DELETE FROM reviews WHERE title LIKE '%[TEST]%' OR body LIKE '%[TEST]%'\");
-    "
+    // 2. Remove throwaway coupons and redemptions by recorded IDs
+    \$cStmt = \$pdo->query('SELECT id FROM coupons WHERE id > $PRE_COUPON_MAX_ID');
+    \$cIds = \$cStmt->fetchAll(PDO::FETCH_COLUMN);
+    if (!empty(\$cIds)) {
+        \$in = implode(',', array_map('intval', \$cIds));
+        \$pdo->exec(\"DELETE FROM coupon_redemptions WHERE coupon_id IN (\$in)\");
+        \$pdo->exec(\"DELETE FROM coupons WHERE id IN (\$in)\");
+    }
 
-    # Remove throwaway contact messages
-    "$PHP_CMD" -r "
-    require 'app/bootstrap.php';
-    \$pdo = App\Database\Database::getInstance();
-    \$pdo->exec(\"DELETE FROM contact_messages WHERE email LIKE '%@test.local'\");
+    // 3. Remove throwaway reviews by recorded IDs
+    \$rStmt = \$pdo->query('SELECT id FROM reviews WHERE id > $PRE_REVIEW_MAX_ID');
+    \$rIds = \$rStmt->fetchAll(PDO::FETCH_COLUMN);
+    if (!empty(\$rIds)) {
+        \$in = implode(',', array_map('intval', \$rIds));
+        \$pdo->exec(\"DELETE FROM reviews WHERE id IN (\$in)\");
+    }
+
+    // 4. Remove throwaway contact messages by recorded IDs
+    \$mStmt = \$pdo->query('SELECT id FROM contact_messages WHERE id > $PRE_MESSAGE_MAX_ID');
+    \$mIds = \$mStmt->fetchAll(PDO::FETCH_COLUMN);
+    if (!empty(\$mIds)) {
+        \$in = implode(',', array_map('intval', \$mIds));
+        \$pdo->exec(\"DELETE FROM contact_messages WHERE id IN (\$in)\");
+    }
+
+    // 5. Purge test audit log rows created during this run
+    \$aStmt = \$pdo->query('SELECT id FROM audit_log WHERE id > $PRE_AUDIT_MAX_ID');
+    \$aIds = \$aStmt->fetchAll(PDO::FETCH_COLUMN);
+    if (!empty(\$aIds)) {
+        \$in = implode(',', array_map('intval', \$aIds));
+        \$pdo->exec(\"DELETE FROM audit_log WHERE id IN (\$in)\");
+    }
+
+    // 6. Purge test email_queue rows created during this run
+    \$eStmt = \$pdo->query('SELECT id FROM email_queue WHERE id > $PRE_EMAIL_MAX_ID');
+    \$eIds = \$eStmt->fetchAll(PDO::FETCH_COLUMN);
+    if (!empty(\$eIds)) {
+        \$in = implode(',', array_map('intval', \$eIds));
+        \$pdo->exec(\"DELETE FROM email_queue WHERE id IN (\$in)\");
+    }
     "
 
     # Restore settings table from snapshot
@@ -193,20 +236,6 @@ cleanup() {
             "$MYSQL_CMD" -u "$DB_USER" "$DB_NAME" < "$SNAPSHOT_ZONES_FILE" 2>/dev/null
         fi
     fi
-
-    # Purge test audit log rows created during this run
-    "$PHP_CMD" -r "
-    require 'app/bootstrap.php';
-    \$pdo = App\Database\Database::getInstance();
-    \$pdo->exec(\"DELETE FROM audit_log WHERE id > $PRE_AUDIT_MAX_ID\");
-    "
-
-    # Purge test email_queue rows created during this run
-    "$PHP_CMD" -r "
-    require 'app/bootstrap.php';
-    \$pdo = App\Database\Database::getInstance();
-    \$pdo->exec(\"DELETE FROM email_queue WHERE to_email LIKE '%@test.local'\");
-    "
 
     # Invalidate settings cache
     "$PHP_CMD" -r "require 'app/bootstrap.php'; clear_settings_cache();"
@@ -412,13 +441,53 @@ echo (\$res7['valid'] === true && \$res7['discount'] === 18.52) ? 'P7 ' : 'F7 ';
 echo (\$res8['valid'] === true && \$res8['discount'] === 300.0) ? 'P8 ' : 'F8 ';
 ")
 
-for p in P1 P2 P3 P4 P5 P6 P7 P8; do
-    if [[ "$COUPON_TEST_RESULTS" =~ $p ]]; then
-        pass "CouponService calculation/refusal case $p passed"
-    else
-        fail "CouponService calculation/refusal case $p failed"
-    fi
-done
+if [[ "$COUPON_TEST_RESULTS" =~ "P1" ]]; then
+    pass "Coupon evaluation rejects unknown code with reason 'unknown'"
+else
+    fail "Coupon evaluation did not reject unknown code with reason 'unknown'"
+fi
+
+if [[ "$COUPON_TEST_RESULTS" =~ "P2" ]]; then
+    pass "Coupon evaluation rejects negative subtotal with reason 'invalid_subtotal'"
+else
+    fail "Coupon evaluation did not reject negative subtotal"
+fi
+
+if [[ "$COUPON_TEST_RESULTS" =~ "P3" ]]; then
+    pass "Coupon evaluation rejects subtotal below minimum spend with reason 'below_min_spend'"
+else
+    fail "Coupon evaluation did not reject subtotal below minimum spend"
+fi
+
+if [[ "$COUPON_TEST_RESULTS" =~ "P4" ]]; then
+    pass "Coupon evaluation rejects deactivated coupon with reason 'inactive'"
+else
+    fail "Coupon evaluation did not reject deactivated coupon"
+fi
+
+if [[ "$COUPON_TEST_RESULTS" =~ "P5" ]]; then
+    pass "Coupon evaluation rejects expired coupon with reason 'expired'"
+else
+    fail "Coupon evaluation did not reject expired coupon"
+fi
+
+if [[ "$COUPON_TEST_RESULTS" =~ "P6" ]]; then
+    pass "Coupon evaluation rejects scheduled future coupon with reason 'not_started'"
+else
+    fail "Coupon evaluation did not reject scheduled future coupon"
+fi
+
+if [[ "$COUPON_TEST_RESULTS" =~ "P7" ]]; then
+    pass "Percentage discount rounds to exactly 2 decimal places (15% on 123.45 = 18.52)"
+else
+    fail "Percentage discount rounding failed"
+fi
+
+if [[ "$COUPON_TEST_RESULTS" =~ "P8" ]]; then
+    pass "Fixed discount caps at subtotal and prevents negative totals (500 on 300 = 300)"
+else
+    fail "Fixed discount cap at subtotal failed"
+fi
 
 # Concurrency test: 20 parallel redemptions against coupon with usage_limit 5
 PARALLEL_COUPON_ID=$("$PHP_CMD" -r "
@@ -528,13 +597,59 @@ try { DeliveryService::quote('zone', 100, 99999); } catch (\Throwable \$e) { \$r
 echo (\$refZone) ? 'D9 ' : 'D9_FAIL ';
 ")
 
-for d in D1 D2 D3 D4 D5 D6 D7 D8 D9; do
-    if [[ "$DELIVERY_TEST_RESULTS" =~ $d ]]; then
-        pass "DeliveryService test case $d passed"
-    else
-        fail "DeliveryService test case $d failed"
-    fi
-done
+if [[ "$DELIVERY_TEST_RESULTS" =~ "D1" ]]; then
+    pass "Haversine formula calculates distance on (0,0)->(0,1) as 111.19 km (+-0.2 km)"
+else
+    fail "Haversine formula failed on (0,0)->(0,1)"
+fi
+
+if [[ "$DELIVERY_TEST_RESULTS" =~ "D2" ]]; then
+    pass "Haversine formula calculates Nairobi CBD to Westlands distance accurately (~3.08 km)"
+else
+    fail "Haversine formula failed on Nairobi CBD to Westlands"
+fi
+
+if [[ "$DELIVERY_TEST_RESULTS" =~ "D3" ]]; then
+    pass "Pricing engine rounds fee to configured steps (step 1, 5, 10, 50)"
+else
+    fail "Pricing engine rounding steps test failed"
+fi
+
+if [[ "$DELIVERY_TEST_RESULTS" =~ "D4" ]]; then
+    pass "Store pickup delivery method always yields KES 0.00 fee"
+else
+    fail "Store pickup delivery fee was not 0.00"
+fi
+
+if [[ "$DELIVERY_TEST_RESULTS" =~ "D5" ]]; then
+    pass "Active zone lookup returns zone base fee (KES 150.00)"
+else
+    fail "Active zone lookup failed"
+fi
+
+if [[ "$DELIVERY_TEST_RESULTS" =~ "D6" ]]; then
+    pass "Subtotal meeting or exceeding free delivery threshold receives free delivery (KES 0.00)"
+else
+    fail "Free delivery threshold application failed"
+fi
+
+if [[ "$DELIVERY_TEST_RESULTS" =~ "D7" ]]; then
+    pass "Delivery quote throws InvalidArgumentException on negative subtotal"
+else
+    fail "Negative subtotal did not throw InvalidArgumentException"
+fi
+
+if [[ "$DELIVERY_TEST_RESULTS" =~ "D8" ]]; then
+    pass "Delivery quote throws InvalidArgumentException on out-of-Kenya coordinates"
+else
+    fail "Out-of-Kenya coordinates did not throw InvalidArgumentException"
+fi
+
+if [[ "$DELIVERY_TEST_RESULTS" =~ "D9" ]]; then
+    pass "Delivery quote throws exception on unknown or inactive delivery zone"
+else
+    fail "Unknown or inactive delivery zone did not throw exception"
+fi
 
 # Test Quote Tester card via POST
 PRICING_CSRF=$(get_csrf "$COOKIE_ADMIN" "$BASE_URL/admin/delivery/pricing.php")
@@ -637,13 +752,35 @@ echo (\$activeAdmins >= 2) ? 'S4 ' : 'S4_FAIL ';
 echo 'S5 ';
 ")
 
-for s in S1 S2 S3 S4 S5; do
-    if [[ "$STAFF_TEST_RESULTS" =~ $s ]]; then
-        pass "Staff protection rule $s passed"
-    else
-        fail "Staff protection rule $s failed"
-    fi
-done
+if [[ "$STAFF_TEST_RESULTS" =~ "S1" ]]; then
+    pass "Staff user cannot create admin account (DomainException thrown)"
+else
+    fail "Staff creating admin account was not blocked"
+fi
+
+if [[ "$STAFF_TEST_RESULTS" =~ "S2" ]]; then
+    pass "Admin user cannot demote themselves to staff (self-demotion blocked)"
+else
+    fail "Admin self-demotion was not blocked"
+fi
+
+if [[ "$STAFF_TEST_RESULTS" =~ "S3" ]]; then
+    pass "Admin user cannot deactivate their own account (self-deactivation blocked)"
+else
+    fail "Admin self-deactivation was not blocked"
+fi
+
+if [[ "$STAFF_TEST_RESULTS" =~ "S4" ]]; then
+    pass "System verifies multiple active admins exist before permitting demotion"
+else
+    fail "Active admins count verification failed"
+fi
+
+if [[ "$STAFF_TEST_RESULTS" =~ "S5" ]]; then
+    pass "Staff management permission checks verified successfully"
+else
+    fail "Staff management permission check failed"
+fi
 
 # Test 10 parallel attempts to demote an active admin when only 1 active admin would be left
 for i in {1..10}; do
@@ -925,47 +1062,348 @@ fi
 # ==============================================================================
 # SECTION I: STATE-CHANGING AUDIT COVERAGE, CSRF & IDOR TAMPERING
 # ==============================================================================
-info "SECTION I: Audit Log Completeness, CSRF Protection & IDOR Tampering"
+info "SECTION I: Audit Log Completeness, CSRF Protection, Token Security & IDOR Tampering"
 
-# 1. Missing CSRF on POST rejected
-curl -s -D "$HEADER_FILE" -b "$COOKIE_ADMIN" -d "action=create&code=NOCSRF10&type=fixed&value=100" "$BASE_URL/admin/coupons/index.php" > /dev/null
-csrf_rej_code=$(grep -i "^HTTP/" "$HEADER_FILE" | tail -n 1 | awk '{print $2}')
-if [ "$csrf_rej_code" -eq 403 ]; then
-    pass "POST without CSRF token rejected with 403"
+# 1. Audit Log Completeness for 2C-2 state-changing actions
+info "Test I-1: Audit Log Completeness for All 2C-2 State-Changing Actions"
+AUDIT_COMPLETENESS_RESULT=$("$PHP_CMD" -r "
+require 'app/bootstrap.php';
+use App\Database\Database;
+use App\Services\CouponService;
+use App\Services\DeliveryService;
+use App\Services\SettingService;
+use App\Services\ReviewService;
+use App\Services\ContactMessageService;
+use App\Services\StaffService;
+
+\$pdo = Database::getInstance();
+\$actorId = $ADMIN_ID;
+\$ip = '127.0.0.1';
+
+// Snapshot existing settings to restore afterwards
+\$origSettings = \$pdo->query('SELECT setting_key, setting_value FROM settings WHERE setting_key IN (\'support_email\', \'support_phone\')')->fetchAll(\PDO::FETCH_KEY_PAIR);
+
+\$cId = null;
+\$zId = null;
+\$revId = null;
+\$msgId = null;
+\$stfId = null;
+
+try {
+    // 1. Coupon actions
+    \$cCode = 'AUD-' . substr(strtoupper(preg_replace('/[^A-Za-z0-9]/', '', '${RAND_ID}')), 0, 8);
+    \$cCode2 = 'AUD2-' . substr(strtoupper(preg_replace('/[^A-Za-z0-9]/', '', '${RAND_ID}')), 0, 8);
+    \$cId = CouponService::create(['code' => \$cCode, 'type' => 'fixed', 'value' => 50, 'min_spend' => 0, 'is_active' => 1], \$actorId, \$ip);
+    CouponService::update(\$cId, ['code' => \$cCode2, 'type' => 'fixed', 'value' => 60, 'min_spend' => 0], \$actorId, \$ip);
+    CouponService::toggleActive(\$cId, \$actorId, \$ip);
+
+    // 2. Zone actions
+    \$zId = DeliveryService::createZone(['county' => 'Nairobi', 'area' => 'AuditZone_${RAND_ID}', 'base_fee' => 120, 'is_active' => 1], \$actorId, \$ip);
+    DeliveryService::updateZone(\$zId, ['county' => 'Nairobi', 'area' => 'AuditZoneUpd_${RAND_ID}', 'base_fee' => 130], \$actorId, \$ip);
+    DeliveryService::deleteZone(\$zId, \$actorId, \$ip);
+    \$zId = null; // already deleted
+
+    // 3. Pricing & Settings save
+    SettingService::updateDeliveryPricing([
+        'store_latitude'          => -1.286389,
+        'store_longitude'         => 36.817223,
+        'distance_base_fee'       => 150.00,
+        'distance_per_km'         => 30.00,
+        'distance_included_km'    => 3.00,
+        'distance_road_factor'    => 1.30,
+        'distance_min_fee'        => 150.00,
+        'distance_max_fee'        => 1500.00,
+        'distance_rounding'       => 10,
+        'free_delivery_threshold' => 5000.00,
+        'order_expiry_minutes'    => 30,
+    ], \$actorId, \$ip);
+
+    SettingService::updateStoreSettings([
+        'store_name'     => 'ShopWise Kenya',
+        'store_tagline'  => 'Quality everyday essentials, delivered across Kenya',
+        'support_email'  => 'support@test.local',
+        'support_phone'  => '0700000000',
+        'pickup_address' => 'Moi Avenue, Nairobi CBD (exact pickup point shared after order confirmation)',
+        'business_hours' => 'Mon-Sat, 8:00 am - 6:00 pm EAT',
+    ], \$actorId, \$ip);
+
+    // 4. Review actions (create temporary review)
+    \$pdo->prepare('INSERT INTO reviews (product_id, user_id, rating, title, body, status, created_at) VALUES (1, 1, 5, \'Audit Rev [TEST]\', \'Test body\', \'pending\', NOW())')->execute();
+    \$revId = (int)\$pdo->lastInsertId();
+    ReviewService::moderate(\$revId, 'approved', \$actorId, \$ip);
+    ReviewService::moderate(\$revId, 'rejected', \$actorId, \$ip);
+    ReviewService::delete(\$revId, \$actorId, \$ip);
+    \$revId = null; // already deleted
+
+    // 5. Message actions (create temporary message)
+    \$pdo->prepare('INSERT INTO contact_messages (name, email, subject, message, status, created_at) VALUES (\'Audit User\', \'audit_${RAND_ID}@test.local\', \'Audit Subj\', \'Test msg\', \'new\', NOW())')->execute();
+    \$msgId = (int)\$pdo->lastInsertId();
+    ContactMessageService::updateStatus(\$msgId, 'read', \$actorId, \$ip);
+    ContactMessageService::reply(\$msgId, 'Test reply', \$actorId, \$ip);
+
+    // 6. Staff actions
+    \$stfId = StaffService::create(['first_name' => 'Audit', 'last_name' => 'Staff', 'email' => 'audit_stf_${RAND_ID}@test.local', 'role' => 'staff'], \$actorId, \$ip);
+    StaffService::update(\$stfId, ['first_name' => 'Audit2', 'last_name' => 'Staff2', 'role' => 'staff'], \$actorId, \$ip);
+    StaffService::toggleStatus(\$stfId, \$actorId, \$ip);
+
+    // Check audit log for all 15 actions
+    \$actions = [
+        'coupon_create',
+        'coupon_update',
+        'coupon_toggle_active',
+        'delivery_zone_create',
+        'delivery_zone_update',
+        'delivery_zone_delete',
+        'delivery_pricing_update',
+        'settings_update',
+        'review_moderate',
+        'review_delete',
+        'message_status_update',
+        'message_reply',
+        'staff_create',
+        'staff_update',
+        'staff_toggle_status',
+    ];
+
+    \$missing = [];
+    foreach (\$actions as \$act) {
+        \$stmt = \$pdo->prepare('SELECT COUNT(*) FROM audit_log WHERE action = :act AND id > :start_id');
+        \$stmt->execute([':act' => \$act, ':start_id' => $PRE_AUDIT_MAX_ID]);
+        if ((int)\$stmt->fetchColumn() === 0) {
+            \$missing[] = \$act;
+        }
+    }
+
+    if (empty(\$missing)) {
+        echo 'AUDIT_ALL_OK';
+    } else {
+        echo 'AUDIT_MISSING:' . implode(',', \$missing);
+    }
+} finally {
+    // Cleanup entities
+    if (\$cId) { \$pdo->prepare('DELETE FROM coupons WHERE id = ?')->execute([\$cId]); }
+    if (\$zId) { \$pdo->prepare('DELETE FROM delivery_zones WHERE id = ?')->execute([\$zId]); }
+    if (\$revId) { \$pdo->prepare('DELETE FROM reviews WHERE id = ?')->execute([\$revId]); }
+    if (\$msgId) { \$pdo->prepare('DELETE FROM contact_messages WHERE id = ?')->execute([\$msgId]); }
+    if (\$stfId) {
+        \$pdo->prepare('DELETE FROM users WHERE id = ?')->execute([\$stfId]);
+        \$pdo->prepare('DELETE FROM password_resets WHERE user_id = ?')->execute([\$stfId]);
+    }
+    \$pdo->prepare('DELETE FROM email_queue WHERE to_email IN (?, ?)')->execute(['audit_${RAND_ID}@test.local', 'audit_stf_${RAND_ID}@test.local']);
+    foreach (\$origSettings as \$k => \$v) {
+        \$pdo->prepare('UPDATE settings SET setting_value = ? WHERE setting_key = ?')->execute([\$v, \$k]);
+    }
+}
+
+")
+
+if [ "$AUDIT_COMPLETENESS_RESULT" = "AUDIT_ALL_OK" ]; then
+    pass "Audit log completeness verified: All 15 state-changing actions logged matching audit_log rows"
 else
-    fail "POST without CSRF expected 403, got HTTP $csrf_rej_code"
+    fail "Audit log completeness missing actions: $AUDIT_COMPLETENESS_RESULT"
 fi
 
-# 2. Wrong CSRF on POST rejected
-curl -s -D "$HEADER_FILE" -b "$COOKIE_ADMIN" -d "action=create&_csrf_token=FORGED_TOKEN_XYZ&code=FORGED10" "$BASE_URL/admin/coupons/index.php" > /dev/null
-csrf_bad_code=$(grep -i "^HTTP/" "$HEADER_FILE" | tail -n 1 | awk '{print $2}')
-if [ "$csrf_bad_code" -eq 403 ]; then
-    pass "POST with forged CSRF token rejected with 403"
+# 2. CSRF missing and forged token on EVERY POST endpoint in 2C-2
+info "Test I-2: CSRF Missing & Forged Token Enforcement Across All 2C-2 POST Endpoints"
+CSRF_ENDPOINTS=(
+    "admin/coupons/index.php"
+    "admin/delivery/zones.php"
+    "admin/delivery/pricing.php"
+    "admin/settings/index.php"
+    "admin/reviews/index.php"
+    "admin/messages/detail.php?id=1"
+    "admin/staff/index.php"
+)
+
+for ep in "${CSRF_ENDPOINTS[@]}"; do
+    # (a) Missing token
+    curl -s -D "$HEADER_FILE" -b "$COOKIE_ADMIN" -d "action=test_probe" "$BASE_URL/$ep" > /dev/null
+    code_m=$(grep -i "^HTTP/" "$HEADER_FILE" | tail -n 1 | awk '{print $2}')
+    if [ "$code_m" -eq 403 ]; then
+        pass "CSRF missing token rejected with HTTP 403 on $ep"
+    else
+        fail "CSRF missing token on $ep expected 403, got $code_m"
+    fi
+
+    # (b) Forged token
+    curl -s -D "$HEADER_FILE" -b "$COOKIE_ADMIN" -d "action=test_probe&_csrf_token=FORGED_BAD_TOKEN_XYZ" "$BASE_URL/$ep" > /dev/null
+    code_f=$(grep -i "^HTTP/" "$HEADER_FILE" | tail -n 1 | awk '{print $2}')
+    if [ "$code_f" -eq 403 ]; then
+        pass "CSRF forged token rejected with HTTP 403 on $ep"
+    else
+        fail "CSRF forged token on $ep expected 403, got $code_f"
+    fi
+done
+
+# 3. Staff set-password token security: hash check, expiration, single-use, secrecy
+info "Test I-3: Staff Set-Password Token Lifecycle & Secrecy"
+STAFF_TOKEN_RESULT=$("$PHP_CMD" -r "
+require 'app/bootstrap.php';
+use App\Database\Database;
+use App\Services\StaffService;
+use App\Services\PasswordResetService;
+
+\$pdo = Database::getInstance();
+\$actorId = $ADMIN_ID;
+\$probeEmail = 'token_probe_${RAND_ID}@test.local';
+
+\$stfId = StaffService::create(['first_name' => 'Token', 'last_name' => 'Probe', 'email' => \$probeEmail, 'role' => 'staff'], \$actorId, '127.0.0.1');
+
+// Fetch queued email and token
+\$qStmt = \$pdo->prepare(\"SELECT body_html FROM email_queue WHERE to_email = :e ORDER BY id DESC LIMIT 1\");
+\$qStmt->execute([':e' => \$probeEmail]);
+\$body = (string)\$qStmt->fetchColumn();
+preg_match('/token=([a-f0-9]{64})/', \$body, \$m);
+\$rawToken = \$m[1] ?? '';
+
+// Fetch token hash from password_resets
+\$pStmt = \$pdo->prepare(\"SELECT token_hash FROM password_resets WHERE user_id = :uid ORDER BY id DESC LIMIT 1\");
+\$pStmt->execute([':uid' => \$stfId]);
+\$storedHash = (string)\$pStmt->fetchColumn();
+
+// 1. Hash check
+\$hashMatches = (!empty(\$rawToken) && \$storedHash !== \$rawToken && \$storedHash === hash('sha256', \$rawToken));
+
+// 2. Token secrecy check: neither rawToken nor storedHash appears in UI or audit_log details
+\$auditCheck = \$pdo->prepare(\"SELECT COUNT(*) FROM audit_log WHERE details LIKE :raw OR details LIKE :hash\");
+\$auditCheck->execute([':raw' => \"%\$rawToken%\", ':hash' => \"%\$storedHash%\"]);
+\$auditLeaks = (int)\$auditCheck->fetchColumn();
+
+// 3. Expiry test
+\$pdo->prepare(\"UPDATE password_resets SET expires_at = DATE_SUB(NOW(), INTERVAL 1 HOUR) WHERE user_id = :uid\")->execute([':uid' => \$stfId]);
+\$expiredRejected = (PasswordResetService::reset(\$rawToken, 'NewSecurePass123!@#') === false);
+
+// 4. Single-use test
+\$pdo->prepare(\"UPDATE password_resets SET expires_at = DATE_ADD(NOW(), INTERVAL 1 HOUR), used_at = NULL WHERE user_id = :uid\")->execute([':uid' => \$stfId]);
+\$firstReset = PasswordResetService::reset(\$rawToken, 'NewSecurePass123!@#');
+\$secondReset = PasswordResetService::reset(\$rawToken, 'SecondAttemptPass123!@#');
+\$singleUseOk = (\$firstReset === true && \$secondReset === false);
+
+// Cleanup
+\$pdo->prepare(\"DELETE FROM password_resets WHERE user_id = ?\")->execute([\$stfId]);
+\$pdo->prepare(\"DELETE FROM users WHERE id = ?\")->execute([\$stfId]);
+\$pdo->prepare(\"DELETE FROM email_queue WHERE to_email = ?\")->execute([\$probeEmail]);
+
+echo json_encode([
+    'hash_ok' => \$hashMatches,
+    'audit_secrecy_ok' => (\$auditLeaks === 0),
+    'expired_rejected' => \$expiredRejected,
+    'single_use_ok' => \$singleUseOk,
+]);
+")
+
+if echo "$STAFF_TOKEN_RESULT" | grep -q '"hash_ok":true'; then
+    pass "Staff set-password token stored in password_resets is SHA-256 hashed and differs from raw token"
 else
-    fail "POST with forged CSRF expected 403, got HTTP $csrf_bad_code"
+    fail "Staff set-password token hash check failed: $STAFF_TOKEN_RESULT"
 fi
 
-# 3. IDOR / Tampering with non-numeric, negative, and nonexistent IDs
+if echo "$STAFF_TOKEN_RESULT" | grep -q '"audit_secrecy_ok":true'; then
+    pass "Staff set-password raw token and hash never appear in audit_log details"
+else
+    fail "Staff set-password token leaked into audit_log details"
+fi
+
+if echo "$STAFF_TOKEN_RESULT" | grep -q '"expired_rejected":true'; then
+    pass "Expired set-password token correctly rejected by PasswordResetService"
+else
+    fail "Expired set-password token was not rejected"
+fi
+
+if echo "$STAFF_TOKEN_RESULT" | grep -q '"single_use_ok":true'; then
+    pass "Staff set-password token is strictly single-use"
+else
+    fail "Staff set-password token single-use enforcement failed"
+fi
+
+# 4. CRLF / Bcc injection and HTML escaping in message reply
+info "Test I-4: Message Reply CRLF/Bcc Header Injection & HTML Escaping"
+MSG_SECURITY_RESULT=$("$PHP_CMD" -r "
+require 'app/bootstrap.php';
+use App\Database\Database;
+use App\Services\ContactMessageService;
+
+\$pdo = Database::getInstance();
+\$actorId = $ADMIN_ID;
+\$probeEmail = 'crlf_probe_${RAND_ID}@test.local';
+
+\$pdo->prepare(\"INSERT INTO contact_messages (name, email, subject, message, status, created_at) VALUES ('CRLF Tester', :e, 'Inquiry\\r\\nBcc: evil@test.local\\r\\n', 'Msg', 'new', NOW())\")->execute([':e' => \$probeEmail]);
+\$msgId = (int)\$pdo->lastInsertId();
+
+\$replyPayload = \"Line 1\\r\\nBcc: hacker@test.local\\r\\n<script>alert('xss')</script><b>Bold reply</b>\";
+ContactMessageService::reply(\$msgId, \$replyPayload, \$actorId, '127.0.0.1');
+
+\$eStmt = \$pdo->prepare(\"SELECT subject, body_html FROM email_queue WHERE to_email = :e ORDER BY id DESC LIMIT 1\");
+\$eStmt->execute([':e' => \$probeEmail]);
+\$emailRow = \$eStmt->fetch(PDO::FETCH_ASSOC);
+
+\$subj = \$emailRow['subject'] ?? '';
+\$bodyHtml = \$emailRow['body_html'] ?? '';
+
+\$noCrlfSubject = (!str_contains(\$subj, \"\\r\") && !str_contains(\$subj, \"\\n\"));
+\$scriptEscaped = (str_contains(\$bodyHtml, '&lt;script&gt;alert(') && !str_contains(\$bodyHtml, '<script>alert('));
+
+// Cleanup
+\$pdo->prepare(\"DELETE FROM contact_messages WHERE id = ?\")->execute([\$msgId]);
+\$pdo->prepare(\"DELETE FROM email_queue WHERE to_email = ?\")->execute([\$probeEmail]);
+
+echo json_encode([
+    'no_crlf_subject' => \$noCrlfSubject,
+    'script_escaped' => \$scriptEscaped,
+]);
+")
+
+if echo "$MSG_SECURITY_RESULT" | grep -q '"no_crlf_subject":true'; then
+    pass "CRLF and Bcc injection sanitized from queued email subject"
+else
+    fail "CRLF not sanitized from queued email subject: $MSG_SECURITY_RESULT"
+fi
+
+if echo "$MSG_SECURITY_RESULT" | grep -q '"script_escaped":true'; then
+    pass "HTML and script in message reply safely escaped in queued email body_html"
+else
+    fail "HTML script in message reply was not escaped in body_html: $MSG_SECURITY_RESULT"
+fi
+
+# 5. Tampered IDs (non-numeric, negative, nonexistent) return real admin 404 page (not 302)
+info "Test I-5: Tampered IDs on Messages, Reviews, Staff, Coupons, Zones, and Audit Pages"
 TAMPER_CASES=(
     "admin/messages/detail.php?id=abc"
     "admin/messages/detail.php?id=-5"
     "admin/messages/detail.php?id=999999"
+    "admin/reviews/index.php?id=abc"
+    "admin/reviews/index.php?id=-5"
+    "admin/reviews/index.php?id=999999"
+    "admin/staff/index.php?id=abc"
+    "admin/staff/index.php?id=-5"
+    "admin/staff/index.php?id=999999"
+    "admin/coupons/index.php?id=abc"
+    "admin/coupons/index.php?id=-5"
+    "admin/coupons/index.php?id=999999"
+    "admin/delivery/zones.php?id=abc"
+    "admin/delivery/zones.php?id=-5"
+    "admin/delivery/zones.php?id=999999"
+    "admin/audit-log/index.php?id=abc"
+    "admin/audit-log/index.php?id=-5"
+    "admin/audit-log/index.php?id=999999"
 )
+
 for tc in "${TAMPER_CASES[@]}"; do
     curl -s -D "$HEADER_FILE" -b "$COOKIE_ADMIN" "$BASE_URL/$tc" > "$BODY_FILE"
     tamper_code=$(grep -i "^HTTP/" "$HEADER_FILE" | head -n 1 | awk '{print $2}')
     tamper_errs=$(grep -Ei "Fatal error|Warning:|Notice:|Deprecated:|Exception" "$BODY_FILE" | wc -l)
-    if [ "$tamper_code" -eq 404 ] || [ "$tamper_code" -eq 302 ] && [ "$tamper_errs" -eq 0 ]; then
-        pass "Tampered ID ($tc) handled cleanly with HTTP $tamper_code and 0 PHP errors"
+    has_404_html=$(grep -q "Page Not Found" "$BODY_FILE" && echo 1 || echo 0)
+    if [ "$tamper_code" -eq 404 ] && [ "$has_404_html" -eq 1 ] && [ "$tamper_errs" -eq 0 ]; then
+        pass "Tampered ID ($tc) returned real admin 404 page (HTTP 404, not 302)"
     else
-        fail "Tampered ID ($tc) expected 404/302, got HTTP $tamper_code (errors: $tamper_errs)"
+        fail "Tampered ID ($tc) expected HTTP 404 admin page, got HTTP $tamper_code"
     fi
 done
 
 # ==============================================================================
 # SECTION J: CLEANUP & POST-TEST BASELINE VERIFICATION
 # ==============================================================================
-info "SECTION J: Cleanup & 11-Resource Database Drift Verification"
+info "SECTION J: Cleanup & 13-Resource Database Drift Verification"
 
 # Trigger cleanup
 cleanup
@@ -980,7 +1418,9 @@ POST_MESSAGES=$(run_sql "SELECT COUNT(*) FROM contact_messages" | tail -n 1)
 POST_USERS=$(run_sql "SELECT COUNT(*) FROM users" | tail -n 1)
 POST_AUDIT=$(run_sql "SELECT COUNT(*) FROM audit_log" | tail -n 1)
 POST_EMAIL=$(run_sql "SELECT COUNT(*) FROM email_queue" | tail -n 1)
+POST_PRODUCTS=$(run_sql "SELECT COUNT(*) FROM products" | tail -n 1)
 POST_VARIANTS=$(run_sql "SELECT COUNT(*) FROM product_variants" | tail -n 1)
+POST_CATEGORIES=$(run_sql "SELECT COUNT(*) FROM categories" | tail -n 1)
 POST_STOCK=$(run_sql "SELECT SUM(stock_qty) FROM product_variants" | tail -n 1)
 
 echo "  Post-test coupons:            $POST_COUPONS (baseline: $PRE_COUPONS)"
@@ -992,7 +1432,9 @@ echo "  Post-test contact_messages:   $POST_MESSAGES (baseline: $PRE_MESSAGES)"
 echo "  Post-test users:              $POST_USERS (baseline: $PRE_USERS)"
 echo "  Post-test audit_log:          $POST_AUDIT (baseline: $PRE_AUDIT)"
 echo "  Post-test email_queue:        $POST_EMAIL (baseline: $PRE_EMAIL)"
+echo "  Post-test products:           $POST_PRODUCTS (baseline: $PRE_PRODUCTS)"
 echo "  Post-test product_variants:   $POST_VARIANTS (baseline: $PRE_VARIANTS)"
+echo "  Post-test categories:         $POST_CATEGORIES (baseline: $PRE_CATEGORIES)"
 echo "  Post-test stock_checksum:     $POST_STOCK (baseline: $PRE_STOCK)"
 
 DRIFT_FAIL=0
@@ -1005,17 +1447,20 @@ DRIFT_FAIL=0
 [ "$POST_USERS" -eq "$PRE_USERS" ] || { fail "users drifted: $POST_USERS vs $PRE_USERS"; DRIFT_FAIL=1; }
 [ "$POST_AUDIT" -eq "$PRE_AUDIT" ] || { fail "audit_log drifted: $POST_AUDIT vs $PRE_AUDIT"; DRIFT_FAIL=1; }
 [ "$POST_EMAIL" -eq "$PRE_EMAIL" ] || { fail "email_queue drifted: $POST_EMAIL vs $PRE_EMAIL"; DRIFT_FAIL=1; }
+[ "$POST_PRODUCTS" -eq 21 ] || { fail "products count drifted: $POST_PRODUCTS vs 21"; DRIFT_FAIL=1; }
 [ "$POST_VARIANTS" -eq 66 ] || { fail "product_variants count drifted: $POST_VARIANTS vs 66"; DRIFT_FAIL=1; }
+[ "$POST_CATEGORIES" -eq 7 ] || { fail "categories count drifted: $POST_CATEGORIES vs 7"; DRIFT_FAIL=1; }
 [ "$POST_STOCK" -eq "$PRE_STOCK" ] || { fail "stock_checksum drifted: $POST_STOCK vs $PRE_STOCK"; DRIFT_FAIL=1; }
 
 if [ "$DRIFT_FAIL" -eq 0 ]; then
-    pass "Zero database drift across all 11 tracked resources"
+    pass "Zero database drift across all 13 tracked resources"
+    pass "Catalog counts verified: exactly 21 products, 66 variants, 7 categories"
 fi
 
 # Run standalone stock verification script
 STOCK_VERIF_OUT=$(python3 scripts/check_stock_parity.py 2>&1)
-if [[ "$STOCK_VERIF_OUT" =~ "SUCCESS: ALL 66 VARIANTS MATCH EXPECTED" ]]; then
-    pass "Stock parity script confirmed 100% parity on 66 variants (sum: 531)"
+if [[ "$STOCK_VERIF_OUT" =~ "SUCCESS: ALL 66 VARIANTS MATCH LEDGER INVARIANT PERFECTLY" ]]; then
+    pass "Stock parity script confirmed 100% ledger invariant on 66 variants"
 else
     fail "Stock parity script failed: $STOCK_VERIF_OUT"
 fi

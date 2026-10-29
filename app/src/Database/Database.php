@@ -8,17 +8,103 @@ use RuntimeException;
 use Throwable;
 
 /**
+ * Custom PDOStatement that tracks executions
+ */
+class TrackedStatement extends \PDOStatement
+{
+    protected function __construct()
+    {
+    }
+
+    public function execute(?array $params = null): bool
+    {
+        TrackedPDO::logQuery($this->queryString);
+        return parent::execute($params);
+    }
+}
+
+/**
+ * Custom PDO that tracks queries and statement executions
+ */
+class TrackedPDO extends PDO
+{
+    private static int $queryCount = 0;
+    private static array $queries = [];
+
+    public static function logQuery(string $sql): void
+    {
+        self::$queryCount++;
+        self::$queries[] = $sql;
+    }
+
+    public static function getQueryCount(): int
+    {
+        return self::$queryCount;
+    }
+
+    public static function resetQueryCount(): void
+    {
+        self::$queryCount = 0;
+        self::$queries = [];
+    }
+
+    public static function getQueries(): array
+    {
+        return self::$queries;
+    }
+
+    public function query(string $query, ?int $fetchMode = null, mixed ...$fetchModeArgs): \PDOStatement|false
+    {
+        self::logQuery($query);
+        if ($fetchMode !== null) {
+            return parent::query($query, $fetchMode, ...$fetchModeArgs);
+        }
+        return parent::query($query);
+    }
+
+    public function exec(string $statement): int|false
+    {
+        self::logQuery($statement);
+        return parent::exec($statement);
+    }
+}
+
+/**
  * Database Connection Manager (PDO Singleton)
  */
 class Database
 {
-    private static ?PDO $instance = null;
+    private static ?TrackedPDO $instance = null;
 
     /**
      * Private constructor to prevent direct instantiation
      */
     private function __construct()
     {
+    }
+
+    /**
+     * Get query count executed during the request/session
+     */
+    public static function getQueryCount(): int
+    {
+        return TrackedPDO::getQueryCount();
+    }
+
+    /**
+     * Reset query count
+     */
+    public static function resetQueryCount(): void
+    {
+        TrackedPDO::resetQueryCount();
+    }
+
+    /**
+     * Get all executed queries
+     */
+    public static function getQueries(): array
+    {
+        return TrackedPDO::getQueries();
     }
 
     /**
@@ -48,10 +134,11 @@ class Database
                 PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
                 PDO::ATTR_EMULATE_PREPARES   => false,
+                PDO::ATTR_STATEMENT_CLASS    => [TrackedStatement::class],
             ];
 
             try {
-                self::$instance = new PDO($dsn, $username, $password, $options);
+                self::$instance = new TrackedPDO($dsn, $username, $password, $options);
             } catch (PDOException $e) {
                 error_log("Database connection failure: " . $e->getMessage());
                 throw new RuntimeException("Could not connect to the database. Please verify configuration settings.");

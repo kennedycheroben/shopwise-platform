@@ -49,6 +49,14 @@ class MailerService
     }
 
     /**
+     * Static helper to enqueue an email
+     */
+    public static function queue(string $toEmail, string $subject, string $htmlBody, string $textBody, ?string $toName = null): int
+    {
+        return (new self())->queueEmail($toEmail, $toName, $subject, $htmlBody, $textBody);
+    }
+
+    /**
  * Send an email immediately through authenticated SMTP using vendored PHPMailer.
      */
     public function sendDirect(string $toEmail, ?string $toName, string $subject, string $htmlBody, string $textBody): bool

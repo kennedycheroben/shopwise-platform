@@ -109,6 +109,47 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
                             <input type="text" name="business_hours" class="form-control" value="<?= e($settings['business_hours'] ?? 'Monday - Saturday: 8:00 AM - 7:00 PM (Closed on Sundays)') ?>" required>
                         </div>
 
+                        <hr class="my-4">
+                        <h6 class="fw-bold mb-3 text-secondary"><i class="bi bi-shield-check me-2 text-primary"></i>Customer Service &amp; Policy Settings</h6>
+
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label small fw-semibold">Support Response Time (Hours) <span class="text-danger">*</span></label>
+                                <div class="input-group">
+                                    <input type="number" name="support_response_hours" class="form-control" min="1" max="168" value="<?= (int)($settings['support_response_hours'] ?? 24) ?>" required>
+                                    <span class="input-group-text">hours</span>
+                                </div>
+                                <div class="form-text small">Promised response window stated on contact &amp; support pages (1-168 hrs).</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small fw-semibold">Contact Notification Email <span class="text-danger">*</span></label>
+                                <div class="input-group">
+                                    <span class="input-group-text"><i class="bi bi-envelope-at"></i></span>
+                                    <input type="email" name="contact_form_notify_email" class="form-control" value="<?= e($settings['contact_form_notify_email'] ?? ($settings['support_email'] ?? 'support@kennedycheroben.co.ke')) ?>" required>
+                                </div>
+                                <div class="form-text small">Staff inbox that receives instant customer contact notifications.</div>
+                            </div>
+                        </div>
+
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <label class="form-label small fw-semibold">Return Window (Days) <span class="text-danger">*</span></label>
+                                <div class="input-group">
+                                    <input type="number" name="return_window_days" class="form-control" min="1" max="90" value="<?= (int)($settings['return_window_days'] ?? 7) ?>" required>
+                                    <span class="input-group-text">days</span>
+                                </div>
+                                <div class="form-text small">Number of calendar days after delivery for returns (1-90 days).</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small fw-semibold">Refund Processing Time (Days) <span class="text-danger">*</span></label>
+                                <div class="input-group">
+                                    <input type="number" name="refund_processing_days" class="form-control" min="1" max="30" value="<?= (int)($settings['refund_processing_days'] ?? 7) ?>" required>
+                                    <span class="input-group-text">days</span>
+                                </div>
+                                <div class="form-text small">Business days required to inspect and disburse refunds (1-30 days).</div>
+                            </div>
+                        </div>
+
                         <div class="d-flex justify-content-end">
                             <button type="submit" class="btn btn-primary px-4">
                                 <i class="bi bi-save me-1"></i> Save Store Settings

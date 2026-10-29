@@ -9,6 +9,16 @@ use App\Services\AdminAuthService;
 Permissions::require('coupons.manage');
 $currentUser = AdminAuthService::user();
 
+// Validate tampered ID on GET request
+if (isset($_GET['id'])) {
+    $rawId = $_GET['id'];
+    if (!is_numeric($rawId) || (int)$rawId <= 0 || !CouponService::get((int)$rawId)) {
+        http_response_code(404);
+        require dirname(__DIR__, 3) . '/app/views/admin/error-404.php';
+        exit;
+    }
+}
+
 // Process POST actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!csrf_verify($_POST['_csrf_token'] ?? null)) {
@@ -17,6 +27,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     $action = $_POST['action'] ?? '';
+    if (isset($_POST['id']) && in_array($action, ['update', 'toggle', 'delete'], true)) {
+        $rawPostId = $_POST['id'];
+        if (!is_numeric($rawPostId) || (int)$rawPostId <= 0 || !CouponService::get((int)$rawPostId)) {
+            http_response_code(404);
+            require dirname(__DIR__, 3) . '/app/views/admin/error-404.php';
+            exit;
+        }
+    }
     $actorId = (int)$currentUser['id'];
     $ip = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
 

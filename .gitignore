@@ -1,18 +1,34 @@
 # Local Environment Configuration
 app/config/config.local.php
+app/config/config.testing.php
 *.local.php
 .env
 .env.*
-_template_reference/
+.env*.local
 
-# Storage & Logs
+# Test Artifacts & Uploads
+public/uploads_test/
+app/storage/rate_limits_test/
+
+# Template References & Scratch
+_template_reference/
+scratch/
+tmp/
+temp/
+*.tmp
+
+# Storage & Logs anywhere
+*.log
 app/storage/logs/*.log
 !app/storage/logs/.gitkeep
+app/storage/rate_limits/*.json
+!app/storage/rate_limits/.gitkeep
 
-# Uploaded Media (Preserve upload directory and htaccess)
-public/uploads/products/*
-!public/uploads/products/.gitkeep
+# Uploaded Media (ignore all upload contents except .gitkeep and .htaccess)
+public/uploads/*
 !public/uploads/.htaccess
+!public/uploads/**/.gitkeep
+!public/uploads/*/.gitkeep
 
 # System & Editor Files
 .DS_Store

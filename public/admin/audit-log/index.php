@@ -9,6 +9,16 @@ use App\Services\AdminAuthService;
 Permissions::require('audit.view');
 $currentUser = AdminAuthService::user();
 
+// Validate tampered ID on GET request
+if (isset($_GET['id'])) {
+    $rawId = $_GET['id'];
+    if (!is_numeric($rawId) || (int)$rawId <= 0 || !AuditLogService::get((int)$rawId)) {
+        http_response_code(404);
+        require dirname(__DIR__, 3) . '/app/views/admin/error-404.php';
+        exit;
+    }
+}
+
 $page = isset($_GET['page']) && is_numeric($_GET['page']) ? (int)$_GET['page'] : 1;
 $filters = [
     'action'        => $_GET['action'] ?? '',

@@ -28,7 +28,11 @@ INSERT INTO `settings` (`setting_key`, `setting_value`, `type`, `description`) V
 ('distance_min_fee', '150.00', 'float', 'Minimum allowable delivery charge'),
 ('distance_max_fee', '1500.00', 'float', 'Maximum delivery cap for motorcycle courier deliveries'),
 ('distance_rounding', '10', 'integer', 'Rounding increment in KES for computed delivery charges'),
-('low_stock_default', '5', 'integer', 'Default threshold for inventory low-stock alerts');
+('low_stock_default', '5', 'integer', 'Default threshold for inventory low-stock alerts'),
+('return_window_days', '7', 'integer', 'Standard window in days from delivery for customer return requests'),
+('refund_processing_days', '7', 'integer', 'Business days required to inspect and disburse approved refunds'),
+('support_response_hours', '24', 'integer', 'Target customer service response time in hours'),
+('contact_form_notify_email', 'support@kennedycheroben.co.ke', 'string', 'Recipient email address for incoming storefront contact inquiries');
 
 -- ------------------------------------------------------------------------------
 -- 2. Delivery Zones
@@ -426,7 +430,7 @@ INSERT INTO `reviews` (`product_id`, `user_id`, `order_id`, `rating`, `title`, `
 -- ------------------------------------------------------------------------------
 DELETE FROM `contact_messages`;
 INSERT INTO `contact_messages` (`name`, `email`, `phone`, `subject`, `message`, `status`, `created_at`) VALUES
-('Dennis Kiprotich', 'dennis.k@gmail.com', '254721998877', 'Inquiry about bulk order delivery to Eldoret', 'Hello ShopWise team, I am looking to purchase 6 pairs of the Classic Black Leather High-Top Sneakers for our youth dance club in Eldoret. Do you offer courier parcel tracking or bulk discount rates? Kindly advise on payment and delivery timeline. Regards, Dennis.', 'new', DATE_SUB(NOW(), INTERVAL 2 DAY)),
-('Amina Hassan', 'amina.hassan@yahoo.com', '254734112233', 'Sizing guidance for tailored charcoal blazer', 'Hi there, I want to surprise my husband with the Tailored Slim-Fit Charcoal Blazer for his birthday. His chest measurement is approximately 41 inches. Would size 40R or 42R be the best fit for an athletic build? Thank you!', 'in_progress', DATE_SUB(NOW(), INTERVAL 1 DAY));
+('Dennis Kiprotich', 'dennis.k@example.com', '254721998877', 'Inquiry about bulk order delivery to Eldoret', 'Hello ShopWise team, I am looking to purchase 6 pairs of the Classic Black Leather High-Top Sneakers for our youth dance club in Eldoret. Do you offer courier parcel tracking or bulk discount rates? Kindly advise on payment and delivery timeline. Regards, Dennis.', 'new', DATE_SUB(NOW(), INTERVAL 2 DAY)),
+('Amina Hassan', 'amina.hassan@example.com', '254734112233', 'Sizing guidance for tailored charcoal blazer', 'Hi there, I want to surprise my husband with the Tailored Slim-Fit Charcoal Blazer for his birthday. His chest measurement is approximately 41 inches. Would size 40R or 42R be the best fit for an athletic build? Thank you!', 'in_progress', DATE_SUB(NOW(), INTERVAL 1 DAY));
 
 SET FOREIGN_KEY_CHECKS = 1;

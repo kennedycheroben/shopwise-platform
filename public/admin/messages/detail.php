@@ -11,13 +11,19 @@ $currentUser = AdminAuthService::user();
 $actorId = (int)$currentUser['id'];
 $ip = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
 
-$id = isset($_GET['id']) && is_numeric($_GET['id']) ? (int)$_GET['id'] : 0;
+$rawId = $_GET['id'] ?? null;
+if ($rawId === null || !is_numeric($rawId) || (int)$rawId <= 0) {
+    http_response_code(404);
+    require dirname(__DIR__, 3) . '/app/views/admin/error-404.php';
+    exit;
+}
+$id = (int)$rawId;
 $message = ContactMessageService::get($id);
 
 if (!$message) {
     http_response_code(404);
-    flash_set('error', 'Contact inquiry not found.');
-    redirect('admin/messages/');
+    require dirname(__DIR__, 3) . '/app/views/admin/error-404.php';
+    exit;
 }
 
 // Automatically mark new message as read upon opening

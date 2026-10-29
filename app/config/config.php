@@ -27,6 +27,45 @@ $mergeConfigs = function (array $base, array $replacement) use (&$mergeConfigs):
 
 $config = $mergeConfigs($defaults, $local);
 
+// Check if automated testing configuration should be loaded.
+// STRICT GUARD: Must satisfy BOTH of the following conditions:
+// 1. $config['app']['environment'] is strictly 'local' (never production).
+// 2. EITHER:
+//    a) The HTTP request host is exactly '127.0.0.1' (stripping port if present),
+//    b) OR CLI environment variable SHOPWISE_CONFIG is set to 'testing'.
+// In production (environment != 'local'), this switch is IMPOSSIBLE.
+$isLocalEnv = (($config['app']['environment'] ?? '') === 'local');
+
+if ($isLocalEnv) {
+    $isCliTesting = (php_sapi_name() === 'cli' && (
+        (getenv('SHOPWISE_CONFIG') === 'testing') ||
+        (($_SERVER['SHOPWISE_CONFIG'] ?? '') === 'testing')
+    ));
+
+    $isHttp127 = false;
+    if (php_sapi_name() !== 'cli') {
+        $rawHost = $_SERVER['HTTP_HOST'] ?? ($_SERVER['SERVER_NAME'] ?? '');
+        $hostOnly = explode(':', $rawHost)[0];
+        if ($hostOnly === '127.0.0.1') {
+            $isHttp127 = true;
+        }
+    }
+
+    if ($isCliTesting || $isHttp127) {
+        $testingFile = __DIR__ . '/config.testing.php';
+        if (file_exists($testingFile)) {
+            $testingConfig = require $testingFile;
+            if (is_array($testingConfig)) {
+                $config = $mergeConfigs($config, $testingConfig);
+                defined('SHOPWISE_TESTING_MODE') or define('SHOPWISE_TESTING_MODE', true);
+            }
+        }
+    }
+}
+
+// Fallback constant definition if testing config was not loaded
+defined('SHOPWISE_TESTING_MODE') or define('SHOPWISE_TESTING_MODE', false);
+
 // Dynamic BASE_URL auto-detection if left empty
 if (empty($config['app']['base_url'])) {
     if (php_sapi_name() === 'cli') {
