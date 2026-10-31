@@ -14,6 +14,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = 'The password confirmation does not match.';
     } elseif (strlen($_POST['password'] ?? '') < 8) {
         $error = 'Your new password must be at least 8 characters.';
+    } elseif (\App\Services\CustomerAuthService::isPasswordCommon($_POST['password'] ?? '')) {
+        $error = 'This password is too common or easily guessed. Please choose a stronger password.';
     } elseif (!PasswordResetService::reset($token, $_POST['password'] ?? '')) {
         $error = 'This recovery link is invalid, expired, or has already been used.';
     } else {
