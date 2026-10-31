@@ -33,10 +33,10 @@ class ImageUploadService
         $absoluteDir = rtrim($this->baseUploadDir, '/') . "/{$year}/{$month}";
 
         if (!is_dir($absoluteDir)) {
-            if (!@mkdir($absoluteDir, 0755, true) && !is_dir($absoluteDir)) {
+            if (!mkdir($absoluteDir, 0755, true) && !is_dir($absoluteDir)) {
                 throw new RuntimeException("Upload directory '{$absoluteDir}' could not be created. Please verify server directory permissions (0755).");
             }
-            @chmod($absoluteDir, 0755);
+            chmod($absoluteDir, 0755);
         }
 
         if (!is_writable($absoluteDir)) {
@@ -162,7 +162,7 @@ class ImageUploadService
         }
 
         // Verify image dimensions with getimagesize
-        $imageInfo = @getimagesize($file['tmp_name']);
+        $imageInfo = getimagesize($file['tmp_name']);
         if ($imageInfo === false) {
             throw new RuntimeException("The uploaded file is not a valid, decodable image.");
         }
@@ -179,9 +179,9 @@ class ImageUploadService
 
         // Load source image into GD
         $sourceImage = match ($imageType) {
-            IMAGETYPE_JPEG => @imagecreatefromjpeg($file['tmp_name']),
-            IMAGETYPE_PNG  => @imagecreatefrompng($file['tmp_name']),
-            IMAGETYPE_WEBP => function_exists('imagecreatefromwebp') ? @imagecreatefromwebp($file['tmp_name']) : false,
+            IMAGETYPE_JPEG => imagecreatefromjpeg($file['tmp_name']),
+            IMAGETYPE_PNG  => imagecreatefrompng($file['tmp_name']),
+            IMAGETYPE_WEBP => function_exists('imagecreatefromwebp') ? imagecreatefromwebp($file['tmp_name']) : false,
             default        => false,
         };
 
@@ -260,7 +260,7 @@ class ImageUploadService
         if (!file_exists($destPath) || filesize($destPath) === 0) {
             throw new RuntimeException("Failed to write image file to disk: {$destPath}");
         }
-        @chmod($destPath, 0644);
+        chmod($destPath, 0644);
     }
 
     /**
@@ -274,7 +274,7 @@ class ImageUploadService
 
         $content = file_get_contents($filePath);
         if (stripos($content, '<?php') !== false || stripos($content, '<?=') !== false || stripos($content, '<script') !== false) {
-            @unlink($filePath);
+            unlink($filePath);
             throw new RuntimeException("Security violation: Malicious payload detected in processed image output.");
         }
     }

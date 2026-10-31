@@ -54,6 +54,10 @@ $subtotal = (float)($cart['subtotal'] ?? 0.0);
         <span>Subtotal</span>
         <span class="subtotal-value" id="miniCartSubtotal"><?= e(format_money($subtotal)) ?></span>
     </div>
-    <button type="button" class="btn btn-proceed w-100" disabled aria-disabled="true">Checkout opens soon</button>
+    <?php if (\App\Services\MpesaService::isConfigured()): ?>
+        <a href="<?= e(url('checkout')) ?>" class="btn btn-proceed w-100 d-inline-block text-center text-decoration-none">Proceed to Checkout</a>
+    <?php else: ?>
+        <button type="button" class="btn btn-proceed w-100" disabled aria-disabled="true">Checkout opens soon</button>
+    <?php endif; ?>
     <a href="<?= e(url('cart')) ?>" class="link-viewbag text-center mt-2 d-block">View full bag →</a>
 </div>

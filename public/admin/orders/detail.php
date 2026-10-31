@@ -59,6 +59,41 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             $note = trim($_POST['internal_note'] ?? '');
             OrderService::addInternalNote($orderId, $note, $actorId, $ip);
             flash_set('success', "Internal note recorded in order timeline.");
+        } elseif ($action === 'check_mpesa_status') {
+            Permissions::require('orders.manage');
+            // Rate limit: 1 check per 10 seconds per order
+            $rateKey = 'admin_check_mpesa_' . $orderId;
+            if (isset($_SESSION[$rateKey]) && (time() - $_SESSION[$rateKey] < 10)) {
+                throw new DomainException("Please wait 10 seconds before checking M-Pesa status again.");
+            }
+            $_SESSION[$rateKey] = time();
+
+            $pStmt = \App\Database\Database::getInstance()->prepare("
+                SELECT * FROM payments WHERE order_id = :oid AND checkout_request_id IS NOT NULL ORDER BY id DESC LIMIT 1
+            ");
+            $pStmt->execute([':oid' => $orderId]);
+            $paymentAttempt = $pStmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$paymentAttempt) {
+                throw new DomainException("No M-Pesa checkout request ID found for this order.");
+            }
+
+            $queryRes = \App\Services\MpesaService::queryStkPush($paymentAttempt['checkout_request_id']);
+            \App\Services\AuditLogger::log($actorId, 'admin_check_mpesa_status', 'order', $orderId, [
+                'checkout_request_id' => $paymentAttempt['checkout_request_id'],
+                'result_code'         => $queryRes['result_code'] ?? null,
+                'result_desc'         => $queryRes['result_desc'] ?? null,
+            ], $ip);
+
+            if ($queryRes['success']) {
+                $raw = $queryRes['raw'] ?? [];
+                $receipt = $raw['MpesaReceiptNumber'] ?? ('QRC' . substr($paymentAttempt['checkout_request_id'], -7));
+                OrderService::transitionToPaid($orderId, $receipt, json_encode($raw), $ip);
+                flash_set('success', "M-Pesa payment confirmed! Order transitioned to Paid (Receipt: {$receipt}).");
+            } else {
+                $desc = $queryRes['result_desc'] ?: ($queryRes['message'] ?? 'Transaction still pending or not completed.');
+                flash_set('info', "M-Pesa Query Status: " . $desc);
+            }
         } else {
             flash_set('error', 'Unrecognized order action requested.');
         }
@@ -118,6 +153,24 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
         <div class="alert alert-danger alert-dismissible fade show" role="alert">
             <i class="bi bi-exclamation-triangle-fill me-2"></i> <?= e($flashError) ?>
             <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+    <?php endif; ?>
+
+    <!-- Attention Required Banner -->
+    <?php if (!empty($order['attention_reason'])): ?>
+        <div class="alert alert-danger border-2 d-flex align-items-center justify-content-between p-3 mb-4 shadow-sm" role="alert">
+            <div class="d-flex align-items-center gap-3">
+                <i class="bi bi-shield-exclamation text-danger fs-3"></i>
+                <div>
+                    <h5 class="alert-heading mb-1 text-danger fw-bold"><i class="bi bi-exclamation-triangle-fill me-1"></i> Attention Required</h5>
+                    <p class="mb-0 text-dark"><?= e($order['attention_reason']) ?></p>
+                </div>
+            </div>
+            <?php if ($canRefund && $order['payment_status'] === 'paid'): ?>
+                <button type="button" class="btn btn-danger btn-sm text-nowrap" data-bs-toggle="modal" data-bs-target="#refundModal">
+                    <i class="bi bi-arrow-counterclockwise me-1"></i> Record Refund
+                </button>
+            <?php endif; ?>
         </div>
     <?php endif; ?>
 
@@ -326,7 +379,18 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
                         <i class="bi bi-credit-card text-primary"></i>
                         Payments & M-Pesa Transactions
                     </h5>
-                    <span class="badge bg-light text-dark border"><?= count($order['payments']) ?> records</span>
+                    <div class="d-flex align-items-center gap-2">
+                        <?php if ($canManage && in_array($order['status'], ['pending_payment'], true)): ?>
+                            <form method="POST" action="<?= e(url('admin/orders/detail.php?id=' . $order['id'])) ?>" class="d-inline">
+                                <?= csrf_field() ?>
+                                <input type="hidden" name="action" value="check_mpesa_status">
+                                <button type="submit" class="btn btn-outline-primary btn-sm">
+                                    <i class="bi bi-arrow-repeat me-1"></i> Check M-Pesa Status
+                                </button>
+                            </form>
+                        <?php endif; ?>
+                        <span class="badge bg-light text-dark border"><?= count($order['payments']) ?> records</span>
+                    </div>
                 </div>
                 <div class="card-body p-0">
                     <?php if (empty($order['payments'])): ?>

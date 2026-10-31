@@ -3,7 +3,7 @@
 # ShopWise Kenya - Phase 2A-FIX Comprehensive Acceptance Test Suite
 #
 # Usage:
-#   ADMIN_EMAIL=admin@shopwise.co.ke ADMIN_PASSWORD=adminpass ./scripts/acceptance_2afix.sh
+#   ADMIN_EMAIL=admin@example.com ADMIN_PASSWORD=adminpass ./scripts/acceptance_2afix.sh
 #
 # Optional environment variables:
 #   BASE_URL    (default: http://localhost/shopwise-platform/public)

@@ -88,10 +88,10 @@ final class AccountService
             SELECT oi.*,
                    p.slug as product_slug,
                    (
-                       SELECT pi.image_path 
-                       FROM product_images pi 
-                       WHERE pi.product_id = oi.product_id 
-                       ORDER BY pi.is_primary DESC, pi.sort_order ASC, pi.id ASC 
+                       SELECT pi.path
+                       FROM product_images pi
+                       WHERE pi.product_id = oi.product_id
+                       ORDER BY pi.is_primary DESC, pi.sort_order ASC, pi.id ASC
                        LIMIT 1
                    ) as primary_image
             FROM order_items oi
@@ -166,6 +166,14 @@ final class AccountService
         $stmt->execute([':aid' => $addressId, ':uid' => $userId]);
         $res = $stmt->fetch(PDO::FETCH_ASSOC);
         return $res ?: null;
+    }
+
+    /**
+     * Alias for getAddress($userId, $addressId) with ($addressId, $userId) signature.
+     */
+    public static function getAddressById(int $addressId, int $userId): ?array
+    {
+        return self::getAddress($userId, $addressId);
     }
 
     /**

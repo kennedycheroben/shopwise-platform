@@ -66,7 +66,7 @@ The following files, directories, and endpoints are strictly for local testing a
 ---
 
 ## 7. Storefront Integration & Customer Links
-- [ ] **Connect `MailerService::getTrackingUrl(string $orderNumber)`**: Once the customer-facing storefront order tracking page is launched (Phase 3+), update this helper method in `app/src/Services/MailerService.php` to return the real customer tracking URL (e.g. `https://shopwise.co.ke/track-order.html?order=...`). The current implementation returns `null` to strictly prevent broken links to unbuilt storefront pages.
+- [ ] **Connect `MailerService::getTrackingUrl(string $orderNumber)`**: Once the customer-facing storefront order tracking page is launched (Phase 3+), update this helper method in `app/src/Services/MailerService.php` to return the real customer tracking URL (e.g. `https://YOUR-SUBDOMAIN.kennedycheroben.co.ke/track-order.html?order=...`). The current implementation returns `null` to strictly prevent broken links to unbuilt storefront pages.
 
 ---
 
@@ -91,11 +91,11 @@ The following template elements and navigation links have been intentionally hid
   - `Wishlist Controls`: Wishlist hearts active on product cards, category tiles, product detail page, and header wishlist counter.
   - `Review Submission Form`: Active "Write a Customer Review" form on product details feedback tab for verified buyers.
 
-- [ ] **Phase 5 - Checkout Activation & Order Processing**:
-  - `Proceed to Checkout Button`: Checkout activation returns. Currently rendered disabled with real label `"Checkout opens soon"` in header mini-cart and `/cart` page; enable and link to `/checkout` once Phase 5 M-Pesa STK push and order placement flow are implemented.
-  - `Instant Purchase Button ("Purchase Instantly")`: Re-enable on product detail page once one-click checkout is available.
-  - `Order Confirmation & Tracking`: Connect order lookup once checkout creates completed orders.
-
+- [x] **Phase 5 - Checkout Activation & Order Processing** (COMPLETED):
+  - `Proceed to Checkout Button`: Enabled and linking directly to `/checkout` when `MpesaService::isConfigured()` is true.
+  - `M-Pesa STK Push Integration`: Complete with real-time prompt initiation, polling status screen, retry cooldown, callback reconciliation, and late payment recovery.
+  - `Order Confirmation & Tracking`: Real-time order confirmation screen (`/checkout/confirmation/{order_number}`) linked to customer account portal.
+  - `Automated Order Expiration`: Background cron worker (`cron/expire_orders.php`) restoring inventory and releasing coupons on unpaid orders.
 
 - [ ] **Phase 6 - Polish & Enhancements**:
   - `Newsletter Subscription Form`: Re-enable in footer once newsletter integration with double opt-in verification is implemented.
@@ -110,9 +110,20 @@ The following template elements and navigation links have been intentionally hid
 
 Before public launch, verify and check off all items:
 - [ ] **Set `app.environment = 'production'`**: Set `'environment' => 'production'` in `config.local.php`. In all non-production modes, the application automatically sends `X-Robots-Tag: noindex, nofollow` and `<meta name="robots" content="noindex, nofollow">` on every page to prevent staging indexation. Production mode enables search engines to index the store.
+- [ ] **Configure Safaricom M-Pesa Production Credentials**:
+  - In `config.local.php`, configure `'mpesa'` array with:
+    - `'env' => 'production'`
+    - Live `'consumer_key'` and `'consumer_secret'` from Safaricom Daraja portal
+    - Production `'shortcode'` (Business PayBill or Buy Goods number)
+    - Production `'passkey'` generated on Daraja portal
+    - `'callback_base_url' => 'https://YOUR-SUBDOMAIN.kennedycheroben.co.ke'`
+    - Secure long random `'callback_secret'`
+    - `'verify_callback_with_query' => true`
+  - Ensure test stubs and mock files are removed from `app/storage/`.
 - [ ] **Replace Placeholder Settings**: Navigate to Admin > Settings and enter real business contact details:
   - Support phone number
-  - Support email address (`support@shopwise.co.ke`)
+  - Support email address (`support@kennedycheroben.co.ke`)
+  - Order notification email (`order_notify_email`)
   - Physical pickup / store address in Nairobi CBD
 - [ ] **Remove Test Configuration & Test Routes**:
   - Delete `app/config/config.testing.php`
@@ -122,6 +133,9 @@ Before public launch, verify and check off all items:
 - [ ] **Enable HTTPS & Enforce SSL**: Ensure SSL/TLS certificate is active and HTTP-to-HTTPS redirection is enforced.
 - [ ] **Set Cookie Secure Flags**: Ensure `'session' => ['secure' => true]` is configured in `config.local.php` so all cookies have the `Secure` flag.
 - [ ] **Configure SMTP Mailer**: Set valid SMTP server host, port, username, password, and encryption in `config.local.php` to ensure delivery of verification, password reset, and order emails.
-- [ ] **Configure Scheduled Cron Jobs**: Set cPanel cron jobs for `send_queued_emails.php` (every 2 min), `purge_carts.php` (daily at midnight), and `expire_orders.php` (every 5 min in Phase 5).
+- [ ] **Configure Scheduled Cron Jobs**: Set cPanel cron jobs:
+  - `cron/send_queued_emails.php` (every 2 min)
+  - `cron/expire_orders.php` (every 5 min)
+  - `cron/purge_carts.php` (daily at midnight)
 
 

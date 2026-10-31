@@ -127,9 +127,19 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
                                     <span class="input-group-text"><i class="bi bi-envelope-at"></i></span>
                                     <input type="email" name="contact_form_notify_email" class="form-control" value="<?= e($settings['contact_form_notify_email'] ?? ($settings['support_email'] ?? 'support@kennedycheroben.co.ke')) ?>" required>
                                 </div>
-                                <div class="form-text small">Staff inbox that receives instant customer contact notifications.</div>
+                                <div class="form-text small">Staff inbox that receives instant customer contact inquiries.</div>
                             </div>
                         </div>
+
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label small fw-semibold">New Paid Order Notification Email <span class="text-danger">*</span></label>
+                                <div class="input-group">
+                                    <span class="input-group-text"><i class="bi bi-bell"></i></span>
+                                    <input type="email" name="order_notify_email" class="form-control" value="<?= e($settings['order_notify_email'] ?? ($settings['support_email'] ?? 'support@kennedycheroben.co.ke')) ?>" required>
+                                </div>
+                                <div class="form-text small">Staff inbox that receives alerts when an order is paid via M-Pesa.</div>
+                            </div>
 
                         <div class="row g-3 mb-4">
                             <div class="col-md-6">

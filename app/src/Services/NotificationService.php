@@ -15,7 +15,25 @@ final class NotificationService
         $items = [];
         $totalCount = 0;
 
-        // 1. Orders Paid Awaiting Fulfillment (orders.view)
+        // 1. Orders Requiring Attention (attention_reason IS NOT NULL) (orders.view)
+        if (Permissions::can('orders.view', $userRole)) {
+            $stmt = $pdo->query("SELECT COUNT(*) FROM orders WHERE attention_reason IS NOT NULL AND attention_reason <> ''");
+            $attCount = (int)$stmt->fetchColumn();
+            if ($attCount > 0) {
+                $items[] = [
+                    'type'  => 'orders_attention',
+                    'title' => 'Orders Requiring Attention',
+                    'count' => $attCount,
+                    'text'  => "{$attCount} order(s) flagged with payment or inventory attention reasons.",
+                    'icon'  => 'bi-shield-exclamation',
+                    'color' => 'danger',
+                    'link'  => url('admin/orders/?status=attention'),
+                ];
+                $totalCount += $attCount;
+            }
+        }
+
+        // 2. Orders Paid Awaiting Fulfillment (orders.view)
         if (Permissions::can('orders.view', $userRole)) {
             $stmt = $pdo->query("SELECT COUNT(*) FROM orders WHERE status = 'paid'");
             $paidCount = (int)$stmt->fetchColumn();

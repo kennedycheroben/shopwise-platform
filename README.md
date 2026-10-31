@@ -20,8 +20,9 @@ A production-grade, single-store e-commerce platform built for the Kenyan market
 | **Admin Catalog (Phase 2B)** | **Complete** | Products, variants matrix, image upload security, concurrency stock locks |
 | **Admin Orders (Phase 2C-1)** | **Complete** | Order lifecycle, payments, refunds, packing slips, customer management |
 | **Admin Modules (Phase 2C-2)**| **Complete** | Coupons, delivery zones & pricing, reviews, messages, staff, audit log |
-| **Storefront (Phase 3 & 4)** | *Pending* | Catalog browsing, cart, checkout, customer account portal (Upcoming) |
-| **Automated Crons (Phase 5)** | *Placeholder*| Background order expiry & M-Pesa auto-reconciliation (Upcoming) |
+| **Storefront & Catalog (Phase 3)**| **Complete** | Catalog browsing, faceted search, CartService, coupon engine, content pages |
+| **Customer Accounts (Phase 4)**| **Complete** | Customer registration, email verification, password reset, Google OAuth, wishlist, verified reviews |
+| **Checkout & M-Pesa (Phase 5)**| **Complete** | Live delivery quotes, whole-shilling rule, Safaricom Daraja STK Push, polling view, order confirmation, expiry cron |
 
 ---
 
@@ -151,7 +152,7 @@ To enable Google Sign-In for storefront customers, create a Web Application OAut
    - Go to **APIs & Services > OAuth consent screen**.
    - Select **External** user type and click **Create**.
    - App Name: `ShopWise Kenya`
-   - User Support Email: your support email (e.g. `support@shopwise.co.ke`)
+   - User Support Email: your support email (e.g. `support@kennedycheroben.co.ke`)
    - Developer Contact Information: your technical contact email.
    - Scopes: `openid`, `email`, `profile`.
 3. **Create Credentials**:
@@ -237,6 +238,119 @@ SHOPWISE_CONFIG=testing python3 scripts/check_stock_parity.py
 
 ---
 
+## Safaricom Daraja M-Pesa Setup & Integration Guide
+
+The ShopWise platform connects directly to Safaricom's Daraja 2.0 API for automated Lipa Na M-Pesa Online (STK Push) customer settlements.
+
+### 1. Daraja Developer Account & Sandbox App Setup
+1. Register an account on the [Safaricom Daraja Developer Portal](https://developer.safaricom.co.ke/).
+2. Navigate to **My Apps** -> **Create New App**.
+3. Check the checkbox for **Lipa Na M-Pesa Online** (and any other Daraja features as needed) and submit.
+4. Copy your generated **Consumer Key** and **Consumer Secret**.
+5. Daraja provides standard sandbox testing credentials:
+   - **Sandbox Business Shortcode (PayBill):** `174379`
+   - **Public Sandbox Passkey:** `bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919` (published by Safaricom in official docs for sandbox testing)
+   - **Sandbox Test Phone Number:** Use Safaricom's public Daraja test phone MSISDN (`254708374149`) or a test SIM linked to your Daraja sandbox testbed.
+
+### 2. Configuration Location (Secrets Safety)
+All credentials and secrets live **strictly** in `app/config/config.local.php` (which is excluded from Git via `.gitignore`). Never commit credentials to version control.
+
+Add or update the `'mpesa'` block in `app/config/config.local.php`:
+```php
+'mpesa' => [
+    'env'                        => 'sandbox', // 'sandbox' or 'production' (NEVER default to production)
+    'consumer_key'               => 'YOUR_DARAJA_CONSUMER_KEY',
+    'consumer_secret'            => 'YOUR_DARAJA_CONSUMER_SECRET',
+    'shortcode'                  => '174379',
+    'passkey'                    => 'bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919',
+    'transaction_type'           => 'CustomerPayBillOnline', // or 'CustomerBuyGoodsOnline'
+    'callback_base_url'          => 'https://YOUR-SUBDOMAIN.kennedycheroben.co.ke',
+    'callback_secret'            => 'GENERATE_A_LONG_RANDOM_SECRET_HEX_OR_ALPHANUMERIC',
+    'callback_allowed_ips'       => [], // Optional IP allowlist for callbacks
+    'verify_callback_with_query' => true, // Confirm success with STK Push Query
+],
+```
+
+### 3. Local Callback Receiving (Development / Testing)
+Safaricom's servers cannot send HTTP POST callbacks to `http://localhost`. To receive real callbacks during local testing:
+1. Start a secure HTTPS tunnel pointing to your local web root:
+   ```bash
+   ngrok http 80
+   # Or cloudflared:
+   cloudflared tunnel --url http://127.0.0.1:80
+   ```
+2. Update `'callback_base_url'` in `config.local.php` to your active tunnel HTTPS URL (e.g. `https://abc-123.ngrok-free.app/shopwise-platform/public`).
+3. The platform will automatically route incoming callbacks to:
+   `https://<tunnel-host>/payments/callback/<callback_secret>`
+4. On production, the callback URL format is:
+   `https://YOUR-SUBDOMAIN.kennedycheroben.co.ke/payments/callback/<callback_secret>`
+   > **CRITICAL URL RESTRICTION**: Safaricom has been reported to reject callback URLs containing the strings `mpesa`, `safaricom`, or `daraja`. Ensure your public tunnel hostname, domain name, and URL path do not contain any of these keywords.
+
+### 4. Sandbox End-to-End Test & Verification
+
+Follow these step-by-step instructions to verify your integration against Safaricom's Daraja Sandbox before live launch:
+
+#### Step A: Verify Sandbox Credentials
+Run the read-only credentials check from your project root:
+```bash
+php scripts/mpesa_sandbox_check.php
+```
+- **Expected result:** `[+] OK: Safaricom Daraja OAuth authentication succeeded! (HTTP 200 OK)`.
+- If it fails, double-check `consumer_key` and `consumer_secret` in `app/config/config.local.php`.
+
+#### Step B: Start Public HTTPS Tunnel
+Start an HTTPS tunnel pointing to your local web server port:
+```bash
+ngrok http 80
+# Or Cloudflare tunnel:
+cloudflared tunnel --url http://127.0.0.1:80
+```
+- Copy the public HTTPS forwarding URL (e.g. `https://random-subdomain.ngrok-free.app/shopwise-platform/public`).
+- Ensure the hostname does **NOT** contain `mpesa`, `safaricom`, or `daraja`.
+- Set `'callback_base_url'` in `config.local.php` to this URL.
+
+#### Step C: Place a Test Checkout Order
+1. Open your browser and navigate to `http://127.0.0.1/shopwise-platform/public/login`.
+2. Sign in as a customer with a verified email.
+3. Add a product variant to your cart and navigate to `/checkout`.
+4. Choose **Store Pickup** or a **Delivery Zone** (amounts are whole KES).
+5. Enter a test Safaricom phone number (`254708374149` or your registered sandbox phone).
+6. Click **Place Order & Pay with M-Pesa**.
+7. The browser immediately navigates to `/checkout/pay/{order_number}` displaying the polling "Check your phone" prompt.
+
+#### Step D: What You Should See Across the Platform
+| Area | Expected State Upon Success |
+| :--- | :--- |
+| **Customer Browser** | Polling detects payment confirmation and automatically redirects to `/checkout/confirmation/{order_number}` displaying order details and the M-Pesa receipt. |
+| **Database (`payments`)** | Payment row transitions from `initiated` -> `pending` -> `success`, with `checkout_request_id`, `mpesa_receipt` (e.g. `QAA...`), and `result_code = 0`. |
+| **Database (`orders`)** | Order transitions from `pending_payment` -> `paid` with `payment_status = 'paid'`. |
+| **Admin Orders** (`/admin/orders`) | Order displays badge **Paid**. Detail view shows payment attempt with receipt, timestamps, and expandable raw JSON callback payload. |
+| **Email Queue** (`email_queue`) | Two emails queued: `Order Placed` (pending payment instructions) and `Payment Received` (confirmation with receipt and order lines). |
+
+#### Step E: Troubleshooting Common Daraja Issues
+| Issue | Probable Cause | Resolution |
+| :--- | :--- | :--- |
+| **Callback never arrives** | Tunnel is offline, URL path mismatch, or hostname contains forbidden keywords. | Ensure tunnel is active and `'callback_base_url'` matches the HTTPS tunnel. Verify URL contains no `mpesa`, `safaricom`, or `daraja`. Test accessibility via `curl -i -X POST <callback_url>`. |
+| **Invalid Access Token (401)** | Expired or incorrect Consumer Key / Secret. | Run `php scripts/mpesa_sandbox_check.php` to test token generation. Token caches in `app/storage/payments/` automatically refresh shortly before expiry. |
+| **STK Push Bad Request (400 / 500)** | Non-integer amount, invalid phone number format, or wrong transaction type. | Phone numbers must strictly be normalized to 12 digits (`2547XXXXXXXX` or `2541XXXXXXXX`). Order amount must be an integer (whole shillings >= 1). |
+| **STK Push Timeout (1037)** | Phone prompt timed out without customer entering PIN. | Order remains `pending_payment`. Customer can click **Send Prompt Again** on `/checkout/pay/{order_number}` after 60-second cooldown. |
+| **User Cancelled (1032)** | Customer tapped cancel on their mobile device prompt. | Order remains `pending_payment`. Friendly notification is displayed, allowing retry or cancellation. |
+| **Callback fails Query Verification** | STK Push Query to Safaricom timed out or failed. | Payment stays in `pending_verification` state. The background expiry cron runs an STK Query to reconcile and settle the payment before expiring the order. |
+
+### 5. Transitioning to Production (Go-Live)
+For live customer transactions with real money:
+1. Request live Daraja credentials on the Safaricom portal (Lipa Na M-Pesa Go-Live process) with your registered PayBill or Buy Goods Till number.
+2. Update `config.local.php` with:
+   - `'env' => 'production'`
+   - Live Consumer Key and Consumer Secret
+   - Live Shortcode and Passkey
+   - Production `'callback_base_url' => 'https://YOUR-SUBDOMAIN.kennedycheroben.co.ke'`
+   - A unique, cryptographically random `'callback_secret'`
+3. Verify `app.environment` is set to `'production'`.
+4. Ensure the background order expiration cron runs every 5 minutes.
+
+---
+
 ## Production Deployment & cPanel Cron Configuration
 
 ### 1. Document Root Architecture
@@ -254,12 +368,11 @@ In cPanel under **Cron Jobs**, configure the following CLI commands:
    /usr/local/bin/php /home/CPANELUSER/shopwise-platform/cron/send_queued_emails.php >/dev/null 2>&1
    ```
 
-2. **Order Expiration & Stock Restoration** (Placeholder until Phase 5):
+2. **Order Expiration & Stock Restoration** (Runs every 5 minutes):
    ```bash
-   # Phase 5 automated order expiry & stock release (every 5 minutes):
    /usr/local/bin/php /home/CPANELUSER/shopwise-platform/cron/expire_orders.php >/dev/null 2>&1
    ```
-   *Note: `cron/expire_orders.php` is a functional placeholder that will be finalized in Phase 5 alongside storefront order placement.*
+   *Note: Automatically checks pending M-Pesa payments with an STK Push Query, marks unverified/unpaid orders as expired after `order_expiry_minutes` (30 min), restores reserved variant inventory exactly once (`expiry_restore` inventory movement), and releases redeemed coupon usage.*
 
 3. **Abandoned Cart Purge** (Runs daily at midnight):
    ```bash
@@ -276,7 +389,7 @@ Before launching to production, complete each of the following mandatory steps:
 1. **Set `app.environment = 'production'`**: In `config.local.php`, set `'environment' => 'production'`. When `app.environment` is not `'production'`, every response is sent with header `X-Robots-Tag: noindex, nofollow` and `<meta name="robots" content="noindex, nofollow">` to prevent staging and local indexation. Setting it to `'production'` enables search engine crawling and indexation.
 2. **Replace Placeholder Settings**: Update store contact details in Admin > Settings or the `settings` database table:
    - **Support Phone**: Replace default placeholder with verified customer care phone number.
-   - **Support Email**: Replace with verified domain email (e.g., `support@shopwise.co.ke`).
+   - **Support Email**: Replace with verified domain email (e.g., `support@kennedycheroben.co.ke` or `support@YOUR-SUBDOMAIN.kennedycheroben.co.ke`).
    - **Pickup Address**: Replace placeholder with exact physical store/depot location in Nairobi CBD.
 3. **Remove Test Configuration & Test Routes**:
    - Delete `app/config/config.testing.php`.

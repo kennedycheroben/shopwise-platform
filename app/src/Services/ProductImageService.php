@@ -273,12 +273,12 @@ class ProductImageService
             if (str_starts_with($image['path'], 'uploads/')) {
                 $mainPath = dirname(__DIR__, 3) . '/public/' . $image['path'];
                 if (file_exists($mainPath)) {
-                    @unlink($mainPath);
+                    unlink($mainPath);
                 }
                 // Also check thumbnail path
                 $thumbPath = preg_replace('/(\.[a-zA-Z0-9]+)$/', '_thumb$1', $mainPath);
                 if (file_exists($thumbPath)) {
-                    @unlink($thumbPath);
+                    unlink($thumbPath);
                 }
             }
 

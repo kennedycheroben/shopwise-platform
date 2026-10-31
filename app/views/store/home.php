@@ -45,7 +45,7 @@ include __DIR__ . '/partials/flash.php';
         <div class="container">
             <div class="section-title text-center mb-5">
                 <h2>Browse by Category</h2>
-                <p class="text-muted">Explore our curated collections of everyday essentials</p>
+                <p class="text-muted">Explore our collections of everyday essentials</p>
             </div>
 
             <div class="row g-4 justify-content-center">

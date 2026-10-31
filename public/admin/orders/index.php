@@ -80,6 +80,7 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
                 <?php
                 $chipList = [
                     'all'              => ['label' => 'All Orders', 'count' => $statusCounts['all'], 'badge' => 'bg-secondary'],
+                    'attention'        => ['label' => 'Attention Required', 'count' => $statusCounts['attention'] ?? 0, 'badge' => 'bg-danger'],
                     'pending_payment'  => ['label' => 'Pending Payment', 'count' => $statusCounts['pending_payment'], 'badge' => 'bg-warning text-dark'],
                     'paid'             => ['label' => 'Paid', 'count' => $statusCounts['paid'], 'badge' => 'bg-success'],
                     'processing'       => ['label' => 'Processing', 'count' => $statusCounts['processing'], 'badge' => 'bg-primary'],
@@ -290,6 +291,11 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
                                         <a href="<?= e(url('admin/orders/detail.php?id=' . $order['id'])) ?>" class="fw-semibold text-primary">
                                             <?= e($order['order_number']) ?>
                                         </a>
+                                        <?php if (!empty($order['attention_reason'])): ?>
+                                            <span class="badge bg-danger ms-1" title="<?= e($order['attention_reason']) ?>">
+                                                <i class="bi bi-exclamation-octagon me-1"></i>Attention
+                                            </span>
+                                        <?php endif; ?>
                                     </td>
                                     <td>
                                         <div class="small fw-semibold"><?= e(date('d M Y', strtotime($order['created_at']))) ?></div>

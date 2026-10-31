@@ -33,18 +33,35 @@ return [
     ],
 
     'mpesa' => [
-        // 'sandbox' or 'live'.
+        // 'sandbox' or 'production'. NEVER default to production.
         // NOTE: Safaricom's public Daraja sandbox passkey is bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919
         // which is published in Safaricom's public documentation for testing.
         // Production credentials go ONLY in config.local.php and must never be committed.
-        'env'                 => 'sandbox',
-        'consumer_key'        => 'YOUR_MPESA_CONSUMER_KEY',
-        'consumer_secret'     => 'YOUR_MPESA_CONSUMER_SECRET',
-        'shortcode'           => '174379',  // Default Daraja sandbox Business Shortcode
-        'passkey'             => 'YOUR_MPESA_PASSKEY', // Use public sandbox passkey for sandbox, live passkey in config.local.php
-        'initiator_name'      => 'testapi',
-        'callback_url'        => 'https://your-domain.co.ke/api/mpesa/callback.php',
-        'transaction_type'    => 'CustomerPayBillOnline',
+        'env'                        => 'sandbox',
+        'consumer_key'               => 'YOUR_MPESA_CONSUMER_KEY',
+        'consumer_secret'            => 'YOUR_MPESA_CONSUMER_SECRET',
+        'shortcode'                  => '174379',  // Default Daraja sandbox Business Shortcode
+        'passkey'                    => 'bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919',
+        'transaction_type'           => 'CustomerPayBillOnline', // 'CustomerPayBillOnline' or 'CustomerBuyGoodsOnline'
+        // The callback URL sent to Safaricom is: <callback_base_url>/payments/callback/<callback_secret>
+        // NOTE: Safaricom has been reported to reject callback URLs containing words such as "mpesa", "safaricom", or "daraja".
+        // Ensure your callback_base_url and tunnel/domain hostname do NOT contain "mpesa", "safaricom", or "daraja".
+        'callback_base_url'          => 'https://YOUR-SUBDOMAIN.kennedycheroben.co.ke',
+        'callback_secret'            => 'YOUR_LONG_RANDOM_CALLBACK_SECRET_HEX_OR_ALPHANUMERIC',
+        'callback_allowed_ips'       => [], // Optional IP allowlist for callbacks. Empty array allows all.
+        'verify_callback_with_query' => true, // Confirm callback success with STK Push Query
+        'endpoints'                  => [
+            'sandbox' => [
+                'oauth'        => 'https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials',
+                'stkpush'      => 'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
+                'stkpushquery' => 'https://sandbox.safaricom.co.ke/mpesa/stkpushquery/v1/query',
+            ],
+            'production' => [
+                'oauth'        => 'https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials',
+                'stkpush'      => 'https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
+                'stkpushquery' => 'https://api.safaricom.co.ke/mpesa/stkpushquery/v1/query',
+            ],
+        ],
     ],
 
     'google_oauth' => [

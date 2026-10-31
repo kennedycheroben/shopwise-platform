@@ -115,6 +115,8 @@ class VariantService
             $poVal = filter_var($data['price_override'], FILTER_VALIDATE_FLOAT);
             if ($poVal === false || $poVal < 0) {
                 $errors['price_override'] = 'Price override must be a positive decimal number or zero.';
+            } elseif (floor($poVal) != $poVal) {
+                $errors['price_override'] = 'Price override must be a whole shilling amount (no cents or fractions).';
             } else {
                 $priceOverride = round($poVal, 2);
             }

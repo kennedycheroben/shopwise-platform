@@ -192,13 +192,23 @@ HTML;
 
         // 3. IP Rate limiting (5 contact submissions per hour per IP)
         $config = require dirname(__DIR__, 2) . '/config/config.php';
-        $storageDir = $config['rate_limits']['storage_dir'] ?? (dirname(__DIR__, 2) . '/app/storage/rate_limits');
+        $storageDir = $config['rate_limits']['storage_dir'] ?? (dirname(__DIR__, 2) . '/storage/rate_limits');
         $limit = (int)($config['rate_limits']['contact_messages_per_ip'] ?? 5);
         $window = 3600; // 1 hour
         $now = time();
 
         if (!is_dir($storageDir)) {
-            @mkdir($storageDir, 0755, true);
+            mkdir($storageDir, 0755, true);
+        }
+        if (!is_dir($storageDir) || !is_writable($storageDir)) {
+            error_log("Contact rate limiting storage directory [{$storageDir}] is not writable. Failing closed with 503.");
+            http_response_code(503);
+            return [
+                'success' => false,
+                'message' => 'Service temporarily unavailable. Please try again shortly.',
+                'errors'  => ['general' => 'Service temporarily unavailable. Please try again shortly.'],
+                'id'      => null,
+            ];
         }
 
         $cleanIp = trim(str_replace(["\r", "\n"], '', $ip));
@@ -207,8 +217,8 @@ HTML;
         $timestamps = [];
 
         if (file_exists($ipFile)) {
-            $content = @file_get_contents($ipFile);
-            $parsed = $content ? @json_decode($content, true) : null;
+            $content = file_get_contents($ipFile);
+            $parsed = $content ? json_decode($content, true) : null;
             if (is_array($parsed)) {
                 $timestamps = array_filter($parsed, fn($ts) => ($now - (int)$ts) < $window);
             }
@@ -287,7 +297,7 @@ HTML;
 
         // 6. Record rate-limit hit
         $timestamps[] = $now;
-        @file_put_contents($ipFile, json_encode(array_values($timestamps)), LOCK_EX);
+        file_put_contents($ipFile, json_encode(array_values($timestamps)), LOCK_EX);
 
         // 7. Queue notification email to contact_form_notify_email
         $notifyEmail = setting('contact_form_notify_email', setting('support_email', 'support@kennedycheroben.co.ke'));

@@ -509,7 +509,7 @@ $isVerified = !empty($customer['email_verified_at']);
                                 <div class="p-3 border rounded bg-light">
                                     <h6 class="fw-bold mb-1"><i class="bi bi-shield-shaded me-1"></i> Account Privacy &amp; Data Deletion</h6>
                                     <p class="small text-muted mb-0">
-                                        Under the Kenya Data Protection Act, 2019, you have the right to request access to or deletion of your personal account data. To request account deletion or data export, please contact our privacy compliance team via our <a href="<?= e(url('support')) ?>" class="text-decoration-none">Support Center</a> or email <code>support@shopwise.co.ke</code>.
+                                        Under the Kenya Data Protection Act, 2019, you have the right to request access to or deletion of your personal account data. To request account deletion or data export, please contact our privacy compliance team via our <a href="<?= e(url('support')) ?>" class="text-decoration-none">Support Center</a> or email <code><?= e(setting('support_email', 'support@kennedycheroben.co.ke')) ?></code>.
                                     </p>
                                 </div>
                             </div>

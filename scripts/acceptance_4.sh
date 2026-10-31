@@ -688,6 +688,32 @@ assert_l_true "admin_cant_access_customer" "Admin session cannot be used as a cu
 assert_l_true "lockout_enforced" "Login lockout enforced after 5 failures per email+IP"
 assert_l_true "session_invalidated_after_pwd_change" "Existing session immediately invalidated when password_changed_at is newer"
 
+# Real HTTP Session Regeneration Test (session fixation defense)
+HTTP_SESS_COOKIE_PRE="$TMP_DIR/sess_pre.txt"
+HTTP_SESS_COOKIE_POST="$TMP_DIR/sess_post.txt"
+HTTP_SESS_HDRS="$TMP_DIR/sess_hdrs.txt"
+rm -f "$HTTP_SESS_COOKIE_PRE" "$HTTP_SESS_COOKIE_POST" "$HTTP_SESS_HDRS"
+
+PAGE_HTML=$(curl -s -c "$HTTP_SESS_COOKIE_PRE" "$BASE_URL/login")
+PRE_SESS_ID=$(grep -i "PHPSESSID" "$HTTP_SESS_COOKIE_PRE" | awk '{print $7}')
+LOGIN_CSRF_TOKEN=$(echo "$PAGE_HTML" | grep -oP 'name="csrf_token" value="\K[^"]+' | head -n 1)
+
+$MYSQL_CMD -u "$DB_USER" "$DB_NAME" -e "UPDATE users SET email_verified_at = NOW(), status = 'active' WHERE email = 'cust_valid_${RAND_SUF}@test.local';" 2>/dev/null || true
+
+curl -s -b "$HTTP_SESS_COOKIE_PRE" -c "$HTTP_SESS_COOKIE_POST" -D "$HTTP_SESS_HDRS" \
+    -d "email=cust_valid_${RAND_SUF}@test.local" \
+    -d "password=StrongPass2026_${RAND_SUF}!" \
+    -d "csrf_token=$LOGIN_CSRF_TOKEN" \
+    "$BASE_URL/login" > /dev/null
+
+POST_SESS_ID=$(grep -i "PHPSESSID" "$HTTP_SESS_COOKIE_POST" | awk '{print $7}')
+if [ -n "$PRE_SESS_ID" ] && [ -n "$POST_SESS_ID" ] && [ "$PRE_SESS_ID" != "$POST_SESS_ID" ]; then
+    pass "Session ID changes after login over real HTTP (cookie before and after)"
+else
+    fail "Session ID did not change after login over real HTTP (pre=$PRE_SESS_ID, post=$POST_SESS_ID)"
+fi
+rm -f "$HTTP_SESS_COOKIE_PRE" "$HTTP_SESS_COOKIE_POST" "$HTTP_SESS_HDRS"
+
 L_UID=$(echo "$LOGIN_JSON" | grep -o '"user_id":[0-9]*' | cut -d: -f2)
 L_AID=$(echo "$LOGIN_JSON" | grep -o '"admin_id":[0-9]*' | cut -d: -f2)
 [ -n "$L_UID" ] && [ "$L_UID" -gt 0 ] && CREATED_USER_IDS+=("$L_UID")

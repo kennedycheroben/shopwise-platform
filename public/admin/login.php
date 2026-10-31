@@ -103,7 +103,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             <div class="form-group mb-3">
               <label for="email" class="form-label">Email address</label>
-              <input type="email" class="form-control" id="email" name="email" value="<?= e($_POST['email'] ?? '') ?>" placeholder="staff@shopwise.co.ke" required autocomplete="email" autofocus>
+              <input type="email" class="form-control" id="email" name="email" value="<?= e($_POST['email'] ?? '') ?>" placeholder="staff@YOUR-SUBDOMAIN.kennedycheroben.co.ke" required autocomplete="email" autofocus>
             </div>
 
             <div class="form-group mb-3">

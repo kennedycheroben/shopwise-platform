@@ -19,6 +19,9 @@ final class Permissions
     ];
     public static function can(string $ability, ?string $role = null): bool
     {
+        if ($role === null && (PHP_SAPI === 'cli' || defined('STDIN'))) {
+            return true;
+        }
         $role ??= AdminAuthService::user()['role'] ?? '';
         $abilities = self::MAP[$role] ?? [];
         return in_array('*', $abilities, true) || in_array($ability, $abilities, true);

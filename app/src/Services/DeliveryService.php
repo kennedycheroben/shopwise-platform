@@ -46,10 +46,8 @@ final class DeliveryService
      */
     public static function roundToStep(float $value, int $step): float
     {
-        if ($step <= 1) {
-            return round($value, 2);
-        }
-        return (float)(round($value / $step) * $step);
+        $step = max(1, $step);
+        return (float)round(round($value / $step) * $step);
     }
 
     /**
@@ -101,6 +99,23 @@ final class DeliveryService
     ): array {
         if ($subtotal < 0) {
             throw new InvalidArgumentException("Order subtotal cannot be negative.");
+        }
+
+        if ($method === 'delivery') {
+            if ($lat !== null && $lng !== null) {
+                $method = 'distance';
+            } elseif ($zoneId !== null && $zoneId > 0) {
+                $method = 'zone';
+            } else {
+                return [
+                    'method'       => 'delivery',
+                    'fee'          => 0.00,
+                    'distance_km'  => null,
+                    'est_days'     => 'Select location',
+                    'label'        => 'Courier Delivery',
+                    'free_applied' => false,
+                ];
+            }
         }
 
         if (!in_array($method, ['pickup', 'zone', 'distance'], true)) {
@@ -198,6 +213,22 @@ final class DeliveryService
         ];
     }
 
+    /**
+     * Convenience method for distance-based delivery quote.
+     */
+    public static function quoteDistance(float $lat, float $lng, float $subtotal): array
+    {
+        return self::quote('distance', $subtotal, null, $lat, $lng);
+    }
+
+    /**
+     * Convenience method for zone-based delivery quote.
+     */
+    public static function quoteZone(int $zoneId, float $subtotal): array
+    {
+        return self::quote('zone', $subtotal, $zoneId);
+    }
+
     // =========================================================================
     // Zones CRUD
     // =========================================================================
@@ -218,6 +249,11 @@ final class DeliveryService
         if (!empty($filters['search'])) {
             $sql .= " AND (z.county LIKE :search OR z.area LIKE :search)";
             $params[':search'] = '%' . trim($filters['search']) . '%';
+        }
+
+        if (isset($filters['is_active'])) {
+            $sql .= " AND z.is_active = :active";
+            $params[':active'] = (int)$filters['is_active'];
         }
 
         $sql .= " ORDER BY z.county ASC, z.fee ASC";
@@ -243,6 +279,14 @@ final class DeliveryService
         return $zone ?: null;
     }
 
+    /**
+     * Alias for getZone()
+     */
+    public static function getZoneById(int $id): ?array
+    {
+        return self::getZone($id);
+    }
+
     public static function createZone(array $data, int $actorId, string $ip): int
     {
         $county = trim($data['county'] ?? '');
@@ -255,6 +299,9 @@ final class DeliveryService
         $fee = (float)($data['fee'] ?? 0);
         if ($fee < 0) {
             throw new InvalidArgumentException("Delivery fee cannot be negative.");
+        }
+        if (floor($fee) != $fee) {
+            throw new InvalidArgumentException("Delivery fee must be a whole shilling amount (e.g. 200, not 200.50).");
         }
 
         $minDays = max(1, (int)($data['est_days_min'] ?? 1));
@@ -310,6 +357,9 @@ final class DeliveryService
         $fee = (float)($data['fee'] ?? $zone['fee']);
         if ($fee < 0) {
             throw new InvalidArgumentException("Delivery fee cannot be negative.");
+        }
+        if (floor($fee) != $fee) {
+            throw new InvalidArgumentException("Delivery fee must be a whole shilling amount (e.g. 200, not 200.50).");
         }
 
         $minDays = max(1, (int)($data['est_days_min'] ?? $zone['est_days_min']));

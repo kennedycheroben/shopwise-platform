@@ -274,7 +274,7 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
                 </div>
                 <div class="mb-3">
                     <label class="form-label small fw-semibold">Work Email <span class="text-danger">*</span></label>
-                    <input type="email" name="email" class="form-control" placeholder="e.g. victor.omondi@shopwise.co.ke" required>
+                    <input type="email" name="email" class="form-control" placeholder="e.g. victor.omondi@YOUR-SUBDOMAIN.kennedycheroben.co.ke" required>
                     <div class="form-text small">An invitation with a secure password setup link will be queued immediately.</div>
                 </div>
                 <div class="mb-3">

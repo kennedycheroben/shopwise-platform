@@ -60,22 +60,20 @@ final class WishlistService
     public static function checkRateLimit(string $ip): bool
     {
         $config = require dirname(__DIR__, 2) . '/config/config.php';
-        $storageDir = $config['rate_limits']['storage_dir'] ?? (dirname(__DIR__, 2) . '/app/storage/rate_limits');
+        $storageDir = $config['rate_limits']['storage_dir'] ?? (dirname(__DIR__, 2) . '/storage/rate_limits');
         $limit = 60;
         $window = 60;
         $now = time();
 
         if (!is_dir($storageDir)) {
-            @mkdir($storageDir, 0755, true);
+            mkdir($storageDir, 0755, true);
         }
-        if (!is_writable($storageDir)) {
-            $fallback = sys_get_temp_dir() . '/shopwise_rate_limits';
-            if (!is_dir($fallback)) {
-                @mkdir($fallback, 0777, true);
-            }
-            if (is_writable($fallback)) {
-                $storageDir = $fallback;
-            }
+        if (!is_dir($storageDir) || !is_writable($storageDir)) {
+            error_log("Wishlist rate limiting storage directory [{$storageDir}] is not writable. Failing closed with 503.");
+            http_response_code(503);
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'message' => 'Service temporarily unavailable. Please try again shortly.']);
+            exit;
         }
 
         $cleanIp = trim(str_replace(["\r", "\n"], '', $ip));
@@ -84,8 +82,8 @@ final class WishlistService
         $timestamps = [];
 
         if (file_exists($ipFile)) {
-            $content = @file_get_contents($ipFile);
-            $parsed = $content ? @json_decode($content, true) : null;
+            $content = file_get_contents($ipFile);
+            $parsed = $content ? json_decode($content, true) : null;
             if (is_array($parsed)) {
                 $timestamps = array_filter($parsed, fn($ts) => ($now - (int)$ts) < $window);
             }
@@ -96,7 +94,7 @@ final class WishlistService
         }
 
         $timestamps[] = $now;
-        @file_put_contents($ipFile, json_encode(array_values($timestamps)), LOCK_EX);
+        file_put_contents($ipFile, json_encode(array_values($timestamps)), LOCK_EX);
         return true;
     }
 
@@ -239,10 +237,10 @@ final class WishlistService
                    p.id, p.name as title, p.name, p.slug, p.base_price, p.is_active,
                    c.name as category_name, c.slug as category_slug,
                    (
-                       SELECT pi.image_path 
-                       FROM product_images pi 
-                       WHERE pi.product_id = p.id 
-                       ORDER BY pi.is_primary DESC, pi.sort_order ASC, pi.id ASC 
+                       SELECT pi.path
+                       FROM product_images pi
+                       WHERE pi.product_id = p.id
+                       ORDER BY pi.is_primary DESC, pi.sort_order ASC, pi.id ASC
                        LIMIT 1
                    ) as primary_image,
                    (

@@ -44,7 +44,7 @@ include __DIR__ . '/partials/flash.php';
                                         <div class="brand-icon">
                                             <i class="bi bi-shield-lock"></i>
                                         </div>
-                                        <h3>Secure Access Portal</h3>
+                                        <h3>Customer Access Portal</h3>
                                         <p>Manage your account with confidence. Your orders, delivery addresses, and saved items are protected.</p>
                                         <ul class="feature-list">
                                             <li>

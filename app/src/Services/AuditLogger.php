@@ -22,11 +22,11 @@ final class AuditLogger {
         return $clean;
     }
 
-    public static function write(int $actorId, string $action, string $type, ?int $entityId, array $details, string $ip): void {
+    public static function write(?int $actorId, string $action, string $type, ?int $entityId, array $details, string $ip): void {
         try {
             $safeDetails = self::redact($details);
             Database::getInstance()->prepare('INSERT INTO audit_log (actor_user_id,action,entity_type,entity_id,details,ip) VALUES (:actor,:action,:type,:entity,:details,:ip)')->execute([
-                ':actor'   => $actorId,
+                ':actor'   => ($actorId && $actorId > 0) ? $actorId : null,
                 ':action'  => $action,
                 ':type'    => $type,
                 ':entity'  => $entityId,
@@ -38,7 +38,7 @@ final class AuditLogger {
         }
     }
 
-    public static function log(int $actorId, string $action, string $type, ?int $entityId, array $details, string $ip): void {
+    public static function log(?int $actorId, string $action, string $type, ?int $entityId, array $details, string $ip): void {
         self::write($actorId, $action, $type, $entityId, $details, $ip);
     }
 }

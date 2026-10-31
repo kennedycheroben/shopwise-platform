@@ -23,6 +23,10 @@ app/storage/logs/*.log
 !app/storage/logs/.gitkeep
 app/storage/rate_limits/*.json
 !app/storage/rate_limits/.gitkeep
+app/storage/*.json
+app/storage/*.lock
+app/storage/payments/
+app/storage/payments_cli/
 
 # Uploaded Media (ignore all upload contents except .gitkeep and .htaccess)
 public/uploads/*

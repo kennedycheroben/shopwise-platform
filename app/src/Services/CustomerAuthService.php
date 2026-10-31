@@ -16,10 +16,6 @@ final class CustomerAuthService
      */
     public static function user(): ?array
     {
-        if (session_status() !== PHP_SESSION_ACTIVE) {
-            @session_start();
-        }
-
         $sessionUser = $_SESSION[self::SESSION_KEY] ?? null;
         if (!is_array($sessionUser) || empty($sessionUser['id'])) {
             return null;
@@ -58,6 +54,14 @@ final class CustomerAuthService
     }
 
     /**
+     * Alias for user() - Get currently authenticated storefront customer
+     */
+    public static function getCurrentCustomer(): ?array
+    {
+        return self::user();
+    }
+
+    /**
      * Require customer authentication for protected routes
      */
     public static function requireLogin(string $returnUrl = '/account'): array
@@ -90,7 +94,10 @@ final class CustomerAuthService
         }
 
         $lowerPwd = strtolower(trim($password));
-        $handle = @fopen($file, 'r');
+        if (!is_readable($file)) {
+            return false;
+        }
+        $handle = fopen($file, 'r');
         if (!$handle) {
             return false;
         }
@@ -651,7 +658,7 @@ final class CustomerAuthService
         // Queue security notification email
         $storeName = setting('store_name', 'ShopWise Kenya');
         $subject = "Your password has been changed - {$storeName}";
-        $bodyHtml = "<p>Hello " . e($record['first_name']) . ",</p><p>The password for your {$storeName} account was successfully changed. All other active sessions have been signed out.</p><p>If you did not perform this change, please contact customer support immediately at " . e(setting('support_email', 'support@shopwise.co.ke')) . ".</p>";
+        $bodyHtml = "<p>Hello " . e($record['first_name']) . ",</p><p>The password for your {$storeName} account was successfully changed. All other active sessions have been signed out.</p><p>If you did not perform this change, please contact customer support immediately at " . e(setting('support_email', 'support@kennedycheroben.co.ke')) . ".</p>";
         $bodyText = "Hello {$record['first_name']},\nThe password for your {$storeName} account was successfully changed.\nIf you did not authorize this, contact support immediately.";
 
         MailerService::queue($record['email'], $subject, $bodyHtml, $bodyText);
@@ -817,7 +824,7 @@ final class CustomerAuthService
 
                 // 2. Send security notice to old email
                 $noticeSubject = "Your account email address was changed - {$storeName}";
-                $noticeHtml = "<p>Hello,</p><p>The email address associated with your {$storeName} account was changed from this address to <strong>" . e($email) . "</strong>.</p><p>If you did not authorize this change, please contact support immediately at " . e(setting('support_email', 'support@shopwise.co.ke')) . ".</p>";
+                $noticeHtml = "<p>Hello,</p><p>The email address associated with your {$storeName} account was changed from this address to <strong>" . e($email) . "</strong>.</p><p>If you did not authorize this change, please contact support immediately at " . e(setting('support_email', 'support@kennedycheroben.co.ke')) . ".</p>";
                 $noticeText = "Hello,\nYour account email was changed to {$email}.\nIf you did not authorize this, contact support immediately.";
                 MailerService::queue($current['email'], $noticeSubject, $noticeHtml, $noticeText);
 

@@ -26,11 +26,11 @@ $faqItems = [
     ],
     [
         'q' => 'Do I need to register an account before placing an order?',
-        'a' => 'No. You can shop freely as a guest without creating an account. All we require is your name, delivery address, phone number for courier coordination, and email address for order confirmation receipts.',
+        'a' => 'You can browse and add items to your bag without an account. To complete checkout and place an order, you must sign in with an account that has a verified email address or sign in with Google.',
     ],
     [
         'q' => 'What payment methods are accepted?',
-        'a' => 'We accept Safaricom M-Pesa via STK Push and Paybill. Payments are verified instantly and automatically attached to your order reference number.',
+        'a' => 'We accept Safaricom M-Pesa via automated STK Push. When you place an order, an M-Pesa PIN prompt is sent directly to your mobile phone. All customer-payable amounts are in whole Kenyan Shillings (KES). Unpaid orders are reserved for ' . setting('order_expiry_minutes', 30) . ' minutes before expiring.',
     ],
     [
         'q' => 'Where do you deliver across Kenya?',

@@ -189,7 +189,7 @@ class MailerService
 
         $recipientEmail = $order['user_email'] ?? null;
         if (empty($recipientEmail)) {
-            $recipientEmail = 'customer@shopwise.co.ke';
+            $recipientEmail = 'customer@example.com';
         }
 
         $customerName = trim(($order['first_name'] ?? '') . ' ' . ($order['last_name'] ?? ''));
@@ -345,6 +345,211 @@ HTML;
 
         $instance = new self();
         return $instance->queueEmail($recipientEmail, $customerName, $subject, $html, $text);
+    }
+
+    /**
+     * Send order placed email (pending payment, how to pay, expiry window)
+     */
+    public static function sendOrderPlacedEmail(int $orderId): int
+    {
+        $pdo = Database::getInstance();
+        $stmt = $pdo->prepare("
+            SELECT o.*, u.email as user_email, u.first_name, u.last_name
+            FROM orders o
+            LEFT JOIN users u ON u.id = o.user_id
+            WHERE o.id = :id
+        ");
+        $stmt->execute([':id' => $orderId]);
+        $order = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$order) {
+            return 0;
+        }
+
+        $recipientEmail = !empty($order['user_email']) ? $order['user_email'] : '';
+        if (empty($recipientEmail) || !filter_var($recipientEmail, FILTER_VALIDATE_EMAIL)) {
+            return 0;
+        }
+
+        $customerName = trim(($order['first_name'] ?? '') . ' ' . ($order['last_name'] ?? ''));
+        if ($customerName === '') {
+            $customerName = $order['recipient_name'] ?: 'Customer';
+        }
+
+        $storeName = setting('store_name', 'ShopWise Kenya');
+        $supportEmail = setting('support_email', 'support@kennedycheroben.co.ke');
+        $supportPhone = setting('support_phone', '+254 700 000 000');
+        $expiryMinutes = (int)setting('order_expiry_minutes', 30);
+
+        $subject = "Order Placed - Pending M-Pesa Payment: #{$order['order_number']} - {$storeName}";
+        $safeName = htmlspecialchars($customerName, ENT_QUOTES, 'UTF-8');
+        $orderNum = htmlspecialchars($order['order_number'], ENT_QUOTES, 'UTF-8');
+        $formattedTotal = format_money((float)$order['total']);
+        $phone = htmlspecialchars($order['phone'], ENT_QUOTES, 'UTF-8');
+
+        $html = <<<HTML
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 20px; background: #f4f6f9;">
+    <div style="max-width: 600px; margin: 0 auto; background: #ffffff; padding: 30px; border-radius: 8px; border: 1px solid #e5e7eb;">
+        <div style="border-bottom: 2px solid #ea580c; padding-bottom: 15px; margin-bottom: 20px;">
+            <h2 style="margin: 0; color: #111827;">{$storeName}</h2>
+            <small style="color: #6b7280;">Order #{$orderNum}</small>
+        </div>
+        <h3 style="color: #1f2937; margin-top: 0;">Order Placed - Action Required</h3>
+        <p>Habari <strong>{$safeName}</strong>,</p>
+        <p>Your order <strong>#{$orderNum}</strong> for <strong>{$formattedTotal}</strong> has been received and reserved for <strong>{$expiryMinutes} minutes</strong>.</p>
+        <div style="background: #fff7ed; border-left: 4px solid #ea580c; padding: 15px; margin: 20px 0; border-radius: 4px;">
+            <h4 style="margin: 0 0 10px 0; color: #9a3412;">How to Complete Your Payment</h4>
+            <ol style="margin: 0; padding-left: 20px; color: #431407;">
+                <li>An M-Pesa STK Push prompt was sent to your phone <strong>{$phone}</strong>.</li>
+                <li>Enter your M-Pesa secret PIN on your handset when prompted.</li>
+                <li>Once Safaricom confirms your transaction, your order will automatically be confirmed for dispatch.</li>
+            </ol>
+            <p style="margin: 10px 0 0 0; font-size: 13px; color: #7c2d12;">If your prompt did not appear or timed out, you can retry from your order payment page before the {$expiryMinutes}-minute window expires.</p>
+        </div>
+        <p style="font-size: 13px; color: #6b7280; border-top: 1px solid #e5e7eb; padding-top: 15px; margin-top: 25px;">
+            Need help? Contact customer service at <a href="mailto:{$supportEmail}" style="color: #ea580c;">{$supportEmail}</a> or call {$supportPhone}.
+        </p>
+    </div>
+</body>
+</html>
+HTML;
+
+        $text = "Habari {$customerName},\n\n";
+        $text .= "Your order #{$order['order_number']} for {$formattedTotal} has been placed.\n";
+        $text .= "Reserved window: {$expiryMinutes} minutes.\n\n";
+        $text .= "An M-Pesa prompt has been sent to {$order['phone']}. Enter your PIN to complete payment.\n";
+        $text .= "Need help? Contact {$supportEmail} or {$supportPhone}.\n";
+
+        return self::queue($recipientEmail, $subject, $html, $text, $customerName);
+    }
+
+    /**
+     * Send payment received email with M-Pesa receipt and delivery details
+     */
+    public static function sendOrderPaidEmail(int $orderId, string $receipt): int
+    {
+        $note = "M-Pesa Receipt: " . $receipt;
+        return self::sendOrderStatusEmail($orderId, 'paid', $note);
+    }
+
+    /**
+     * Send admin notification email for a newly paid order
+     */
+    public static function sendAdminNewPaidOrderEmail(int $orderId, string $receipt): int
+    {
+        $pdo = Database::getInstance();
+        $stmt = $pdo->prepare("
+            SELECT o.*, u.email as user_email, u.first_name, u.last_name
+            FROM orders o
+            LEFT JOIN users u ON u.id = o.user_id
+            WHERE o.id = :id
+        ");
+        $stmt->execute([':id' => $orderId]);
+        $order = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$order) {
+            return 0;
+        }
+
+        $adminEmail = setting('order_notify_email', setting('support_email', 'support@kennedycheroben.co.ke'));
+        if (!filter_var($adminEmail, FILTER_VALIDATE_EMAIL)) {
+            $adminEmail = 'support@kennedycheroben.co.ke';
+        }
+
+        $storeName = setting('store_name', 'ShopWise Kenya');
+        $subject = "[ADMIN ALERT] New Paid Order: #{$order['order_number']} ({$receipt})";
+        $orderNum = htmlspecialchars($order['order_number'], ENT_QUOTES, 'UTF-8');
+        $safeReceipt = htmlspecialchars($receipt, ENT_QUOTES, 'UTF-8');
+        $formattedTotal = format_money((float)$order['total']);
+        $custName = htmlspecialchars($order['recipient_name'], ENT_QUOTES, 'UTF-8');
+        $phone = htmlspecialchars($order['phone'], ENT_QUOTES, 'UTF-8');
+        $delivery = htmlspecialchars($order['delivery_method'] === 'pickup' ? 'Store Pickup' : ($order['county'] . ' - ' . $order['area']), ENT_QUOTES, 'UTF-8');
+
+        $html = <<<HTML
+<!DOCTYPE html>
+<html>
+<body style="font-family: sans-serif; line-height: 1.5; color: #111;">
+    <h3>New Order Paid via M-Pesa</h3>
+    <table cellpadding="6" style="border-collapse: collapse; width: 100%; max-width: 500px;">
+        <tr><td><strong>Order Number:</strong></td><td>#{$orderNum}</td></tr>
+        <tr><td><strong>M-Pesa Receipt:</strong></td><td>{$safeReceipt}</td></tr>
+        <tr><td><strong>Amount Paid:</strong></td><td>{$formattedTotal}</td></tr>
+        <tr><td><strong>Customer:</strong></td><td>{$custName}</td></tr>
+        <tr><td><strong>Phone:</strong></td><td>{$phone}</td></tr>
+        <tr><td><strong>Delivery:</strong></td><td>{$delivery}</td></tr>
+    </table>
+    <p>Please log in to the admin panel to review and prepare this order for dispatch.</p>
+</body>
+</html>
+HTML;
+
+        $text = "New Paid Order #{$order['order_number']}\n";
+        $text .= "Receipt: {$receipt}\nAmount: {$formattedTotal}\nCustomer: {$order['recipient_name']}\nPhone: {$order['phone']}\n";
+
+        return self::queue($adminEmail, $subject, $html, $text, 'Store Admin');
+    }
+
+    /**
+     * Send admin alert for late payment where stock was unavailable
+     */
+    public static function sendAdminLatePaymentStockAlertEmail(int $orderId, string $receipt): int
+    {
+        $adminEmail = setting('order_notify_email', setting('support_email', 'support@kennedycheroben.co.ke'));
+        if (!filter_var($adminEmail, FILTER_VALIDATE_EMAIL)) {
+            $adminEmail = 'support@kennedycheroben.co.ke';
+        }
+
+        $subject = "[ATTENTION REQUIRED] Late M-Pesa Payment on Expired Order #{$orderId}";
+        $safeReceipt = htmlspecialchars($receipt, ENT_QUOTES, 'UTF-8');
+
+        $html = <<<HTML
+<!DOCTYPE html>
+<html>
+<body style="font-family: sans-serif; line-height: 1.5; color: #111;">
+    <h3 style="color: #b02a37;">ATTENTION: Late M-Pesa Payment Received - Stock Unavailable</h3>
+    <p>A payment of M-Pesa receipt <strong>{$safeReceipt}</strong> was received for order ID <strong>#{$orderId}</strong> after the order had already expired.</p>
+    <p>The system attempted to re-reserve inventory, but one or more variants are out of stock.</p>
+    <p><strong>Action Required:</strong> Please open Order #{$orderId} in the admin orders panel to inspect the inventory and either fulfill manually or issue a refund to the customer.</p>
+</body>
+</html>
+HTML;
+
+        $text = "ATTENTION: Late M-Pesa Payment on Expired Order #{$orderId}\nReceipt: {$receipt}\nStock could not be re-reserved. Manual refund or fulfillment required.\n";
+
+        return self::queue($adminEmail, $subject, $html, $text, 'Store Admin');
+    }
+
+    /**
+     * Send admin alert for payment attention reasons (amount mismatch, invalid receipt, etc.).
+     */
+    public static function sendAdminAttentionAlert(int $orderId, string $reason): int
+    {
+        $adminEmail = setting('order_notify_email', setting('support_email', 'support@kennedycheroben.co.ke'));
+        if (!filter_var($adminEmail, FILTER_VALIDATE_EMAIL)) {
+            $adminEmail = 'support@kennedycheroben.co.ke';
+        }
+
+        $subject = "[ATTENTION REQUIRED] M-Pesa Payment Anomaly on Order #{$orderId}";
+        $safeReason = htmlspecialchars($reason, ENT_QUOTES, 'UTF-8');
+
+        $html = <<<HTML
+<!DOCTYPE html>
+<html>
+<body style="font-family: sans-serif; line-height: 1.5; color: #111;">
+    <h3 style="color: #b02a37;">ATTENTION: M-Pesa Payment Flagged</h3>
+    <p>A payment callback for order ID <strong>#{$orderId}</strong> was received with an anomaly:</p>
+    <p style="background: #fff3cd; padding: 10px; border-left: 4px solid #ffc107;"><strong>Reason:</strong> {$safeReason}</p>
+    <p><strong>Action Required:</strong> Please review Order #{$orderId} in the admin orders panel to inspect the transaction details.</p>
+</body>
+</html>
+HTML;
+
+        $text = "ATTENTION: M-Pesa Payment Flagged on Order #{$orderId}\nReason: {$reason}\nPlease review in admin panel.\n";
+
+        return self::queue($adminEmail, $subject, $html, $text, 'Store Admin');
     }
 }
 

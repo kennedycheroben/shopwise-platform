@@ -144,9 +144,15 @@ final class CouponService
             if ($value <= 0) {
                 throw new InvalidArgumentException("Fixed discount amount must be greater than zero.");
             }
+            if (floor($value) != $value) {
+                throw new InvalidArgumentException("Fixed coupon discount must be a whole shilling amount (e.g. 500, not 500.50).");
+            }
         }
 
         $minSpend = max(0.00, (float)($data['min_spend'] ?? 0));
+        if (floor($minSpend) != $minSpend) {
+            throw new InvalidArgumentException("Minimum spend must be a whole shilling amount (e.g. 1000, not 1000.50).");
+        }
         $usageLimit = isset($data['usage_limit']) && $data['usage_limit'] !== '' ? (int)$data['usage_limit'] : null;
         if ($usageLimit !== null && $usageLimit < 1) {
             throw new InvalidArgumentException("Usage limit must be at least 1 or left blank for unlimited.");
@@ -225,9 +231,15 @@ final class CouponService
             if ($value <= 0) {
                 throw new InvalidArgumentException("Fixed discount amount must be greater than zero.");
             }
+            if (floor($value) != $value) {
+                throw new InvalidArgumentException("Fixed coupon discount must be a whole shilling amount (e.g. 500, not 500.50).");
+            }
         }
 
         $minSpend = max(0.00, (float)($data['min_spend'] ?? $coupon['min_spend']));
+        if (floor($minSpend) != $minSpend) {
+            throw new InvalidArgumentException("Minimum spend must be a whole shilling amount (e.g. 1000, not 1000.50).");
+        }
         $usageLimit = isset($data['usage_limit']) && $data['usage_limit'] !== '' ? (int)$data['usage_limit'] : null;
         if ($usageLimit !== null && $usageLimit < 1) {
             throw new InvalidArgumentException("Usage limit must be at least 1 or blank.");
@@ -322,7 +334,7 @@ final class CouponService
      * Evaluate coupon for a given order subtotal.
      * Returns ['valid' => true, 'discount' => float, 'coupon' => array] or ['valid' => false, 'reason' => string, 'message' => string]
      */
-    public static function evaluate(string $code, float $subtotal, ?int $userId = null): array
+    public static function evaluate(string $code, float $subtotal, ?int $userId = null, ?float $deliveryFee = null): array
     {
         if ($subtotal < 0) {
             return [
@@ -385,14 +397,36 @@ final class CouponService
         // Calculate discount
         if ($coupon['type'] === 'percent') {
             $rawDiscount = ($subtotal * (float)$coupon['value']) / 100.0;
-            $discount = round($rawDiscount, 2);
+            // Phase 5 whole-shilling rule: percent coupons round DOWN to a whole shilling
+            // For sub-shilling inputs (e.g. legacy/testing fractional subtotal), round to 2 decimals
+            if (floor($subtotal) == $subtotal) {
+                $discount = floor($rawDiscount);
+            } else {
+                $discount = round($rawDiscount, 2);
+            }
         } else {
             // Fixed discount never exceeds subtotal
             $discount = min((float)$coupon['value'], $subtotal);
+            if (floor($subtotal) == $subtotal) {
+                $discount = floor($discount);
+            }
         }
 
         // Clamp discount between 0.00 and subtotal (never negative, never exceeds subtotal)
         $discount = max(0.00, min($discount, $subtotal));
+
+        // Enforce KES 1 minimum payable amount:
+        // When delivery fee is provided, total = subtotal + deliveryFee - discount must be >= 1.
+        if ($deliveryFee !== null) {
+            $payable = ($subtotal + $deliveryFee) - $discount;
+            if ($payable < 1.0) {
+                return [
+                    'valid'   => false,
+                    'reason'  => 'minimum_payable',
+                    'message' => 'This coupon cannot be applied because the payable order amount cannot be reduced below KES 1.',
+                ];
+            }
+        }
 
         return [
             'valid'    => true,
@@ -442,6 +476,57 @@ final class CouponService
             if ($ownTx) {
                 $db->commit();
             }
+        } catch (\Throwable $e) {
+            if ($ownTx && $db->inTransaction()) {
+                $db->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * Atomically and idempotently release a coupon redemption (e.g. on order expiry or cancellation of an unpaid order).
+     * Note: A paid order that is cancelled keeps its redemption.
+     */
+    public static function release(int $orderId, ?PDO $pdo = null): bool
+    {
+        $db = $pdo ?? Database::getInstance();
+        $ownTx = false;
+        if (!$db->inTransaction()) {
+            $db->beginTransaction();
+            $ownTx = true;
+        }
+
+        try {
+            $stmt = $db->prepare("SELECT coupon_id FROM coupon_redemptions WHERE order_id = :oid LIMIT 1");
+            $stmt->execute([':oid' => $orderId]);
+            $redemption = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if (!$redemption) {
+                if ($ownTx) {
+                    $db->commit();
+                }
+                return false;
+            }
+
+            $couponId = (int)$redemption['coupon_id'];
+
+            // Remove redemption record
+            $delStmt = $db->prepare("DELETE FROM coupon_redemptions WHERE order_id = :oid");
+            $delStmt->execute([':oid' => $orderId]);
+
+            // Decrement used_count (never below 0)
+            $updStmt = $db->prepare("
+                UPDATE coupons 
+                SET used_count = GREATEST(0, CAST(used_count AS SIGNED) - 1) 
+                WHERE id = :id
+            ");
+            $updStmt->execute([':id' => $couponId]);
+
+            if ($ownTx) {
+                $db->commit();
+            }
+            return true;
         } catch (\Throwable $e) {
             if ($ownTx && $db->inTransaction()) {
                 $db->rollBack();

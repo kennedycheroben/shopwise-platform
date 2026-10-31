@@ -112,6 +112,11 @@ final class SettingService
             throw new InvalidArgumentException("A valid contact form notification email address is required.");
         }
 
+        $orderNotifyEmail = trim($data['order_notify_email'] ?? $email);
+        if ($orderNotifyEmail === '' || !filter_var($orderNotifyEmail, FILTER_VALIDATE_EMAIL)) {
+            throw new InvalidArgumentException("A valid order notification email address is required.");
+        }
+
         $current = self::getAll();
         $before = [
             'store_name'                => $current['store_name'] ?? '',
@@ -124,6 +129,7 @@ final class SettingService
             'refund_processing_days'    => (int)($current['refund_processing_days'] ?? 7),
             'support_response_hours'    => (int)($current['support_response_hours'] ?? 24),
             'contact_form_notify_email' => $current['contact_form_notify_email'] ?? ($current['support_email'] ?? ''),
+            'order_notify_email'        => $current['order_notify_email'] ?? ($current['support_email'] ?? ''),
         ];
 
         $after = [
@@ -137,6 +143,7 @@ final class SettingService
             'refund_processing_days'    => $refundProcessingDays,
             'support_response_hours'    => $supportResponseHours,
             'contact_form_notify_email' => $notifyEmail,
+            'order_notify_email'        => $orderNotifyEmail,
         ];
 
         self::set('store_name', $storeName, 'string');
@@ -149,6 +156,7 @@ final class SettingService
         self::set('refund_processing_days', $refundProcessingDays, 'integer');
         self::set('support_response_hours', $supportResponseHours, 'integer');
         self::set('contact_form_notify_email', $notifyEmail, 'string');
+        self::set('order_notify_email', $orderNotifyEmail, 'string');
 
         AuditLogger::log($actorId, 'settings_update', 'settings', null, [
             'before' => $before,
@@ -172,10 +180,16 @@ final class SettingService
         if ($baseFee < 0) {
             throw new InvalidArgumentException("Distance base fee cannot be negative.");
         }
+        if (floor($baseFee) != $baseFee) {
+            throw new InvalidArgumentException("Distance base fee must be a whole shilling amount (no cents or fractions).");
+        }
 
         $perKm = (float)($data['distance_per_km'] ?? 0);
         if ($perKm < 0) {
             throw new InvalidArgumentException("Rate per kilometer cannot be negative.");
+        }
+        if (floor($perKm) != $perKm) {
+            throw new InvalidArgumentException("Rate per kilometer must be a whole shilling amount (no cents or fractions).");
         }
 
         $includedKm = (float)($data['distance_included_km'] ?? 0);
@@ -192,10 +206,16 @@ final class SettingService
         if ($minFee < 0) {
             throw new InvalidArgumentException("Minimum delivery fee cannot be negative.");
         }
+        if (floor($minFee) != $minFee) {
+            throw new InvalidArgumentException("Minimum delivery fee must be a whole shilling amount (no cents or fractions).");
+        }
 
         $maxFee = (float)($data['distance_max_fee'] ?? 0);
         if ($maxFee < $minFee) {
             throw new InvalidArgumentException("Maximum delivery fee (KES {$maxFee}) cannot be less than the minimum fee (KES {$minFee}).");
+        }
+        if (floor($maxFee) != $maxFee) {
+            throw new InvalidArgumentException("Maximum delivery fee must be a whole shilling amount (no cents or fractions).");
         }
 
         $rounding = (int)($data['distance_rounding'] ?? 10);
@@ -206,6 +226,9 @@ final class SettingService
         $freeThreshold = (float)($data['free_delivery_threshold'] ?? 0);
         if ($freeThreshold < 0) {
             throw new InvalidArgumentException("Free delivery threshold cannot be negative (set to 0 to disable).");
+        }
+        if (floor($freeThreshold) != $freeThreshold) {
+            throw new InvalidArgumentException("Free delivery threshold must be a whole shilling amount (no cents or fractions).");
         }
 
         $expiryMins = (int)($data['order_expiry_minutes'] ?? 30);

@@ -16,7 +16,7 @@ Searched across all files in `app/views/store/` and subdirectories for:
 | File & Line | Original Unsupported Text | Problem Identified | Fix / Replacement Applied | Backing Data Source |
 | :--- | :--- | :--- | :--- | :--- |
 | `app/views/store/faq.php:34` | "We deliver to all 47 counties across Kenya... licensed courier partners such as Fargo Courier and Wells Fargo" | False claim: Delivery zones do not cover all 47 counties; no named courier partners. | Derived dynamically: lists active counties from `DeliveryService::getCounties()` (`Nairobi, Kiambu, Machakos & Kajiado, Other Major Towns`). | `delivery_zones` table (`is_active = 1`) |
-| `app/views/store/about.php:32` | "serving customers across all 47 counties through certified courier networks" | False: store does not cover all 47 counties, no certified couriers named. | Replaced with "operating from Nairobi... essentials backed by fast dispatch, fair transparent pricing in Kenyan Shillings, and secure M-Pesa payment." | `settings` & `delivery_zones` |
+| `app/views/store/about.php:32` | "serving customers across all 47 counties through certified courier networks" | False: store does not cover all 47 counties, no certified couriers named. | Replaced with "operating from Nairobi... products with transparent pricing in Kenyan Shillings and direct M-Pesa payment." | `settings` & `delivery_zones` |
 | `app/views/store/about.php:57` | "Countrywide Delivery" | Unbacked claim of nationwide delivery. | Replaced with "Regional Delivery Zones" reflecting active delivery zones. | `delivery_zones` table |
 | `app/views/store/partials/footer.php:80` | "Delivery across Kenya within 24-48 hours via licensed couriers" | Unbacked: no licensed couriers named, coverage is not universal. | Replaced with "Fulfillment and dispatch from our Nairobi CBD store across active delivery zones in 1 to 4 business days." | `delivery_zones` table |
 | `app/views/store/home.php:235` | "Countrywide Delivery" | Universal coverage claim unsupported. | Replaced with "Regional Delivery Zones" (Same-day to 1 day in Nairobi; 1-4 business days across regional zones). | `delivery_zones` table |
@@ -99,4 +99,19 @@ Any reference across the storefront to "all 47 counties" or "nationwide" has bee
 | **Wishlist** | Customer wishlist capacity | `/wishlist`, Product cards | System Rule (`WishlistService::MAX_ITEMS`) | Up to 200 items per customer; rate limit 60 actions/min |
 | **Reviews** | Verified buyer review requirement | `/product/{slug}#tab-feedback` | System Rule (`ReviewService::canCustomerReview`) | Reviews allowed strictly for delivered or paid orders containing the item |
 | **Reviews** | Review moderation & submission limit | `/product/{slug}#tab-feedback`, Admin Reviews | System Rule (`ReviewService::submitReview`) | 1 review per product per customer, status pending until approved, 5 submissions/hour |
+
+---
+
+## 5. Phase 5: Orders, Checkout, Delivery Quotes & M-Pesa Ground Truth
+
+| Domain | Business Statement / Policy | Public Page(s) | Backing System Rule / Policy | Implementation Details |
+| :--- | :--- | :--- | :--- | :--- |
+| **Payment Window** | Order payment window & stock reservation | `/checkout/pay`, `/terms`, Checkout | `settings.order_expiry_minutes` | Defaults to 30 minutes. If unpaid past expiry, stock is restored automatically via background cron (`cron/expire_orders.php`). |
+| **STK Push Retry** | M-Pesa STK Push prompt attempts & cooldown | `/checkout/pay` | System Rule (`MpesaService::canRetryStkPush`) | Maximum 3 attempts per order, minimum 60-second cooldown between prompts. Pre-flight STK Push Query prevents double billing. |
+| **Whole Shillings** | Whole Kenyan Shillings payment policy | Entire store, Admin | Whole-Shilling Rule | Safaricom M-Pesa accepts whole KES only. Product prices, coupons, delivery fees, and order totals are strictly integer KES (minimum KES 1). |
+| **Delivery Fees** | Delivery quote calculation rules | `/checkout`, `/shipping-info` | `DeliveryService` & `delivery_zones` | Zones have fixed fees (KES 150 - 600). Distance pricing uses Haversine formula with road curvature factor 1.30. Bounded strictly within Kenya. |
+| **Refunds** | Refund processing method | `/return-policy`, `/terms` | System Policy | All refunds are processed manually by store administrators via Safaricom M-Pesa, recorded against the order, and logged in the immutable audit log. |
+| **Late Payments** | Payment received after order expiry | System Callback | System Rule (`OrderService::handleLateSuccessAfterExpiry`) | If payment arrives after expiry, system attempts to re-reserve stock. If stock is unavailable, the order is flagged with an Attention Required alert for admin resolution. |
+| **Order Placement Limits** | Checkout velocity limits | `/checkout` | System Rule (`OrderService::createFromCart`) | Maximum 5 open pending orders per customer; maximum 10 checkout orders placed per hour per customer. |
+
 

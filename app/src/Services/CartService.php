@@ -161,14 +161,25 @@ class CartService
     public static function clearRateLimits(?string $dir = null): void
     {
         $config = require dirname(__DIR__, 2) . '/config/config.php';
-        $storageDir = $dir ?? ($config['rate_limits']['storage_dir'] ?? (dirname(__DIR__, 2) . '/app/storage/rate_limits'));
-        if (!is_dir($storageDir)) {
-            @mkdir($storageDir, 0755, true);
+        $dirsToClear = [];
+        if ($dir !== null) {
+            $dirsToClear[] = $dir;
+        } else {
+            $dirsToClear[] = $config['rate_limits']['storage_dir'] ?? (dirname(__DIR__, 2) . '/storage/rate_limits');
+            if (defined('SHOPWISE_TESTING_MODE') && SHOPWISE_TESTING_MODE === true) {
+                $dirsToClear[] = dirname(__DIR__, 2) . '/storage/rate_limits_test';
+                $dirsToClear[] = dirname(__DIR__, 2) . '/storage/rate_limits_cli';
+            }
         }
-        if (is_dir($storageDir)) {
-            foreach (glob($storageDir . '/*.json') as $file) {
-                if (is_file($file)) {
-                    @unlink($file);
+        foreach (array_unique($dirsToClear) as $targetDir) {
+            if (!is_dir($targetDir)) {
+                mkdir($targetDir, 0755, true);
+            }
+            if (is_dir($targetDir) && is_writable($targetDir)) {
+                foreach (glob($targetDir . '/*.json') as $file) {
+                    if (is_file($file)) {
+                        unlink($file);
+                    }
                 }
             }
         }
@@ -185,10 +196,15 @@ class CartService
         $config = require dirname(__DIR__, 2) . '/config/config.php';
         $sessionLimit = (int)($config['rate_limits']['cart_writes_per_session'] ?? self::RATE_LIMIT_WRITES_PER_MINUTE);
         $ipLimit = (int)($config['rate_limits']['cart_writes_per_ip'] ?? self::RATE_LIMIT_IP_WRITES_PER_MINUTE);
-        $storageDir = $config['rate_limits']['storage_dir'] ?? (dirname(__DIR__, 2) . '/app/storage/rate_limits');
+        $storageDir = $config['rate_limits']['storage_dir'] ?? (dirname(__DIR__, 2) . '/storage/rate_limits');
 
         if (!is_dir($storageDir)) {
-            @mkdir($storageDir, 0755, true);
+            mkdir($storageDir, 0755, true);
+        }
+        if (!is_dir($storageDir) || !is_writable($storageDir)) {
+            error_log("Cart rate limiting storage directory [{$storageDir}] is not writable. Failing closed with 503.");
+            http_response_code(503);
+            throw new \RuntimeException("Service temporarily unavailable. Please try again shortly.");
         }
 
         $now = time();
@@ -200,8 +216,8 @@ class CartService
         $sessFile = $storageDir . '/' . $sessKey . '.json';
         $sessTimestamps = [];
         if (file_exists($sessFile)) {
-            $content = @file_get_contents($sessFile);
-            $data = $content ? @json_decode($content, true) : null;
+            $content = file_get_contents($sessFile);
+            $data = $content ? json_decode($content, true) : null;
             if (is_array($data)) {
                 $sessTimestamps = array_filter($data, fn($ts) => ($now - (int)$ts) < $window);
             }
@@ -223,8 +239,8 @@ class CartService
         $ipFile = $storageDir . '/' . $ipKey . '.json';
         $ipTimestamps = [];
         if (file_exists($ipFile)) {
-            $content = @file_get_contents($ipFile);
-            $data = $content ? @json_decode($content, true) : null;
+            $content = file_get_contents($ipFile);
+            $data = $content ? json_decode($content, true) : null;
             if (is_array($data)) {
                 $ipTimestamps = array_filter($data, fn($ts) => ($now - (int)$ts) < $window);
             }
@@ -237,10 +253,10 @@ class CartService
 
         // Record timestamp for both session and IP
         $sessTimestamps[] = $now;
-        @file_put_contents($sessFile, json_encode(array_values($sessTimestamps)), LOCK_EX);
+        file_put_contents($sessFile, json_encode(array_values($sessTimestamps)), LOCK_EX);
 
         $ipTimestamps[] = $now;
-        @file_put_contents($ipFile, json_encode(array_values($ipTimestamps)), LOCK_EX);
+        file_put_contents($ipFile, json_encode(array_values($ipTimestamps)), LOCK_EX);
     }
 
     /**

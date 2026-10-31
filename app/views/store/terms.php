@@ -91,7 +91,7 @@ include __DIR__ . '/partials/flash.php';
                                 <ul class="item-list list-unstyled ps-2">
                                     <li class="mb-2"><i class="bi bi-check-lg text-success me-2"></i> <strong>Account Security:</strong> If you suspect unauthorized access to your account, you must immediately change your password or notify customer support.</li>
                                     <li class="mb-2"><i class="bi bi-check-lg text-success me-2"></i> <strong>Verified Buyer Reviews:</strong> To maintain integrity and prevent fraudulent ratings, reviews may only be submitted by verified customers who have a delivered or paid order containing that product. All reviews are moderated before publication.</li>
-                                    <li class="mb-2"><i class="bi bi-check-lg text-success me-2"></i> <strong>Account Deletion:</strong> Customers may request account closure and personal data deletion at any time by emailing customer support at <a href="mailto:<?= e(setting('support_email', 'support@shopwise.co.ke')) ?>"><?= e(setting('support_email', 'support@shopwise.co.ke')) ?></a>.</li>
+                                    <li class="mb-2"><i class="bi bi-check-lg text-success me-2"></i> <strong>Account Deletion:</strong> Customers may request account closure and personal data deletion at any time by emailing customer support at <a href="mailto:<?= e(setting('support_email', 'support@kennedycheroben.co.ke')) ?>"><?= e(setting('support_email', 'support@kennedycheroben.co.ke')) ?></a>.</li>
                                 </ul>
                             </div>
                         </article>
@@ -130,7 +130,8 @@ include __DIR__ . '/partials/flash.php';
                                 <h3 class="h4">M-Pesa Payment Settlement</h3>
                             </div>
                             <div class="term-body">
-                                <p>Payments must be settled through Safaricom M-Pesa using our automated STK Push prompt or store Paybill shortcode. Unpaid pending orders are held for <strong><?= $orderExpiryMinutes ?> minutes</strong> before automatic expiration to release stock back to other shoppers.</p>
+                                <p>Payments must be settled through Safaricom M-Pesa using our automated STK Push prompt. In accordance with M-Pesa network standards, all customer-payable amounts are in whole Kenyan Shillings (KES), with a minimum payable total of KES 1. Unpaid pending orders are held for <strong><?= $orderExpiryMinutes ?> minutes</strong> before automatic expiration to release stock back to other shoppers.</p>
+                                <p>If you experience network delays receiving the STK prompt on your phone, you may retry up to 3 times with a minimum 60-second cooldown between attempts. If a successful payment arrives after an order has expired, our system will automatically attempt to re-reserve your items; if stock is no longer available, the order is flagged for priority administrator attention to arrange fulfillment or issue an M-Pesa refund.</p>
                                 <div class="alert-box p-3 bg-light rounded border">
                                     <div class="alert-title d-flex align-items-center mb-2">
                                         <i class="bi bi-shield-lock text-primary me-2"></i>
@@ -160,7 +161,7 @@ include __DIR__ . '/partials/flash.php';
                                 <h3 class="h4">Order Cancellation</h3>
                             </div>
                             <div class="term-body">
-                                <p>You may cancel an order free of charge by contacting customer support within 30 minutes of placement or at any time before the package has been handed over to couriers for dispatch. Once dispatched, cancellations are handled under our Return Policy.</p>
+                                <p>Unpaid pending orders may be cancelled at any time before payment or will automatically expire after <?= $orderExpiryMinutes ?> minutes. Any coupon redemption on an unpaid cancelled or expired order is immediately restored. For paid orders, cancellations are processed manually by our administration team via Safaricom M-Pesa prior to courier dispatch.</p>
                             </div>
                         </article>
 

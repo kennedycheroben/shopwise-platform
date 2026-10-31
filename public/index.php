@@ -520,8 +520,513 @@ $router->post('/cart/coupon/remove', function () use ($cartService) {
     }
 });
 
-/* -------------------------------------------------------------------------
+/**
+ * Route rate limiter helper using protected storage directory.
+ * Fails closed with 503 if storage directory is not writable.
+ */
+function check_route_rate_limit(string $key, int $maxAttempts, int $windowSeconds): bool {
+    $config = require dirname(__DIR__) . '/app/config/config.php';
+    $storageDir = $config['rate_limits']['storage_dir'] ?? (dirname(__DIR__) . '/app/storage/rate_limits');
+    if (!is_dir($storageDir)) {
+        @mkdir($storageDir, 0755, true);
+    }
+    if (!is_dir($storageDir) || !is_writable($storageDir)) {
+        error_log("Rate limiting storage directory [{$storageDir}] is not writable. Failing closed with 503.");
+        http_response_code(503);
+        send_json_response(['error' => 'Service temporarily unavailable. Please try again shortly.'], 503);
+    }
+    $file = $storageDir . '/' . hash('sha256', $key) . '.json';
+    $now = time();
+    $timestamps = [];
+    if (file_exists($file)) {
+        $content = file_get_contents($file);
+        $timestamps = $content ? json_decode($content, true) : [];
+        if (!is_array($timestamps)) $timestamps = [];
+    }
+    $timestamps = array_filter($timestamps, fn($ts) => ($now - $ts) < $windowSeconds);
+    if (count($timestamps) >= $maxAttempts) {
+        return false;
+    }
+    $timestamps[] = $now;
+    file_put_contents($file, json_encode(array_values($timestamps)), LOCK_EX);
+    return true;
+}
 
+/* -------------------------------------------------------------------------
+ * CHECKOUT & M-PESA DARAJA ROUTES (Phase 5)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Route: GET /checkout
+ * Storefront checkout view
+ */
+$router->get('/checkout', function () use ($cartService) {
+    if (!\App\Services\MpesaService::isConfigured()) {
+        flash_set('info', 'Checkout opens soon. M-Pesa is not currently configured.');
+        redirect('cart');
+    }
+
+    $cart = $cartService->getCartDetails();
+    if (empty($cart['items'])) {
+        flash_set('warning', 'Your shopping bag is empty. Please add items before checking out.');
+        redirect('cart');
+    }
+
+    include dirname(__DIR__) . '/app/views/store/checkout.php';
+});
+
+/**
+ * Route: POST /checkout/quote (JSON)
+ * Real-time dynamic delivery fee, discount & total calculation for display
+ */
+$router->post('/checkout/quote', function () use ($cartService) {
+    if (!\App\Services\MpesaService::isConfigured()) {
+        send_json_response(['success' => false, 'error' => 'Checkout is currently disabled.'], 400);
+    }
+
+    $cart = $cartService->getCartDetails();
+    $subtotal = (float)($cart['subtotal'] ?? 0);
+    if ($subtotal <= 0) {
+        send_json_response(['success' => false, 'error' => 'Your shopping bag is empty.'], 400);
+    }
+
+    // Accept JSON or form-urlencoded payload
+    $rawInput = file_get_contents('php://input');
+    $jsonData = [];
+    if (!empty($rawInput)) {
+        $decoded = json_decode($rawInput, true);
+        if (is_array($decoded)) {
+            $jsonData = $decoded;
+        }
+    }
+    $input = !empty($jsonData) ? array_merge($_POST, $jsonData) : $_POST;
+
+    $deliveryMethod = trim((string)($input['delivery_method'] ?? 'delivery'));
+    if (!in_array($deliveryMethod, ['pickup', 'delivery', 'zone', 'distance'], true)) {
+        $deliveryMethod = 'delivery';
+    }
+
+    $zoneId = (!empty($input['zone_id']) && is_numeric($input['zone_id'])) ? (int)$input['zone_id'] : null;
+    $lat = (isset($input['latitude']) && is_numeric($input['latitude'])) ? (float)$input['latitude'] : ((isset($input['lat']) && is_numeric($input['lat'])) ? (float)$input['lat'] : null);
+    $lng = (isset($input['longitude']) && is_numeric($input['longitude'])) ? (float)$input['longitude'] : ((isset($input['lng']) && is_numeric($input['lng'])) ? (float)$input['lng'] : null);
+    $couponCode = trim((string)($input['coupon_code'] ?? ($cart['coupon_code'] ?? '')));
+
+    // Validate coordinates if provided
+    if ($lat !== null || $lng !== null) {
+        if ($lat === null || $lng === null || !\App\Services\DeliveryService::isKenyaCoordinate($lat, $lng)) {
+            send_json_response([
+                'success' => false,
+                'error'   => 'Delivery coordinates must be located within Kenya boundaries (Lat -4.8 to 5.1, Lng 33.9 to 41.9).',
+            ], 400);
+        }
+    }
+
+    // Validate zone if provided
+    if ($zoneId !== null) {
+        $zone = \App\Services\DeliveryService::getZoneById($zoneId);
+        if (!$zone || empty($zone['is_active'])) {
+            send_json_response([
+                'success' => false,
+                'error'   => 'The selected delivery zone is unavailable or inactive.',
+            ], 400);
+        }
+    }
+
+    try {
+        $quote = \App\Services\DeliveryService::quote($deliveryMethod, $subtotal, $zoneId, $lat, $lng);
+        $fee = (float)$quote['fee'];
+
+        // Whole shilling check on fee
+        if ($fee != floor($fee) || $fee < 0) {
+            send_json_response(['success' => false, 'error' => 'Delivery fee must be a whole shilling amount.'], 400);
+        }
+
+        $currentCustomer = CustomerAuthService::user();
+        $userId = $currentCustomer ? (int)$currentCustomer['id'] : null;
+
+        $discount = 0.00;
+        if ($couponCode !== '') {
+            $couponEval = \App\Services\CouponService::evaluate($couponCode, $subtotal, $userId, $fee);
+            if ($couponEval['valid']) {
+                $discount = (float)$couponEval['discount'];
+            }
+        }
+
+        // Whole shilling rule on total
+        $total = ($subtotal + $fee) - $discount;
+        if (floor($total) != $total || $total < 1.0) {
+            send_json_response([
+                'success' => false,
+                'error'   => 'Payable order total must be a whole shilling amount of at least KES 1.',
+            ], 400);
+        }
+
+        $estDays = $quote['est_days'] ?? $quote['estimated_days'] ?? 'Standard delivery';
+        $feeFormatted = format_money($fee);
+        $discFormatted = format_money($discount);
+        $subFormatted = format_money($subtotal);
+        $totFormatted = format_money($total);
+
+        send_json_response([
+            'success'                 => true,
+            'fee'                     => (int)round($fee),
+            'formatted_fee'           => $feeFormatted,
+            'fee_formatted'           => $feeFormatted,
+            'estimated_days'          => $estDays,
+            'est_days'                => $estDays,
+            'discount'                => (int)round($discount),
+            'formatted_disc'          => $discFormatted,
+            'discount_formatted'      => $discFormatted,
+            'subtotal'                => (int)round($subtotal),
+            'formatted_sub'           => $subFormatted,
+            'subtotal_formatted'      => $subFormatted,
+            'total'                   => (int)round($total),
+            'formatted_tot'           => $totFormatted,
+            'total_formatted'         => $totFormatted,
+            'total_integer_formatted' => number_format((int)round($total), 0),
+            'distance_km'             => $quote['distance_km'] ?? null,
+            'pricing_method'          => $quote['pricing_method'] ?? $quote['method'] ?? $deliveryMethod,
+        ]);
+    } catch (\Throwable $e) {
+        send_json_response(['success' => false, 'error' => $e->getMessage()], 400);
+    }
+});
+
+/**
+ * Route: POST /checkout/place
+ * Places order from cart inside transaction and initiates STK Push
+ */
+$router->post('/checkout/place', function () use ($cartService) {
+    if (!\App\Services\MpesaService::isConfigured()) {
+        flash_set('error', 'Checkout is currently disabled. M-Pesa is not configured.');
+        redirect('cart');
+    }
+
+    $customer = CustomerAuthService::user();
+    if (!$customer) {
+        redirect('login?next=' . urlencode('/checkout'));
+    }
+
+    $isVerified = ($customer['email_verified_at'] !== null || ($customer['auth_provider'] ?? '') === 'google');
+    if (!$isVerified) {
+        flash_set('error', 'Please verify your email address before placing an order.');
+        redirect('checkout');
+    }
+
+    if (!csrf_verify()) {
+        flash_set('error', 'Security token invalid or expired. Please try again.');
+        redirect('checkout');
+    }
+
+    // Rate limit: 10 checkout placements per hour per customer
+    if (!check_route_rate_limit('checkout_place_' . (int)$customer['id'], 10, 3600)) {
+        flash_set('error', 'You have reached the checkout limit of 10 orders per hour. Please try again later.');
+        redirect('checkout');
+    }
+
+    $idempotencyToken = trim((string)($_POST['idempotency_token'] ?? ''));
+    if ($idempotencyToken === '') {
+        flash_set('error', 'Missing checkout idempotency token. Please refresh and try again.');
+        redirect('checkout');
+    }
+
+    // Client-supplied monetary fields are strictly ignored. Only choices are extracted:
+    $deliveryMethod = trim((string)($_POST['delivery_method'] ?? 'delivery'));
+    if (!in_array($deliveryMethod, ['pickup', 'delivery'], true)) {
+        $deliveryMethod = 'delivery';
+    }
+
+    $addressId = (!empty($_POST['address_id']) && is_numeric($_POST['address_id'])) ? (int)$_POST['address_id'] : null;
+    $recipientName = trim((string)($_POST['recipient_name'] ?? ''));
+    if ($recipientName === '') {
+        $recipientName = trim(($customer['first_name'] ?? '') . ' ' . ($customer['last_name'] ?? ''));
+    }
+
+    $phone = trim((string)($_POST['phone'] ?? ''));
+    $normalizedPhone = \App\Services\MpesaService::normalizePhone($phone);
+    if (!$normalizedPhone) {
+        flash_set('error', 'Please provide a valid Kenyan M-Pesa phone number (e.g., 07XXXXXXXX or 01XXXXXXXX).');
+        redirect('checkout');
+    }
+
+    $county = null;
+    $area = null;
+    $streetDetails = null;
+    $zoneId = null;
+    $lat = null;
+    $lng = null;
+
+    if ($deliveryMethod === 'delivery') {
+        if ($addressId !== null) {
+            $savedAddr = \App\Services\AccountService::getAddressById($addressId, (int)$customer['id']);
+            if (!$savedAddr) {
+                flash_set('error', 'Selected saved address could not be found.');
+                redirect('checkout');
+            }
+            $recipientName = $savedAddr['recipient_name'] ?? $recipientName;
+            $county = $savedAddr['county'] ?? null;
+            $area = $savedAddr['area'] ?? null;
+            $streetDetails = $savedAddr['street_details'] ?? $savedAddr['address_line_1'] ?? null;
+            if (!empty($savedAddr['address_line_2'])) {
+                $streetDetails = ($streetDetails ? $streetDetails . ' ' : '') . $savedAddr['address_line_2'];
+            }
+            // Map county/area to zone
+            $zones = \App\Services\DeliveryService::listZones(['county' => $county, 'is_active' => 1]);
+            foreach ($zones as $z) {
+                if (strcasecmp($z['area'], $area) === 0) {
+                    $zoneId = (int)$z['id'];
+                    break;
+                }
+            }
+            if ($zoneId === null && !empty($zones)) {
+                $zoneId = (int)$zones[0]['id'];
+            }
+        } else {
+            $county = trim((string)($_POST['county'] ?? ''));
+            $area = trim((string)($_POST['area'] ?? ''));
+            $streetDetails = trim((string)($_POST['street_details'] ?? $_POST['address_line_1'] ?? ''));
+            $zoneId = (!empty($_POST['zone_id']) && is_numeric($_POST['zone_id'])) ? (int)$_POST['zone_id'] : null;
+            $lat = (isset($_POST['latitude']) && is_numeric($_POST['latitude'])) ? (float)$_POST['latitude'] : ((isset($_POST['lat']) && is_numeric($_POST['lat'])) ? (float)$_POST['lat'] : null);
+            $lng = (isset($_POST['longitude']) && is_numeric($_POST['longitude'])) ? (float)$_POST['longitude'] : ((isset($_POST['lng']) && is_numeric($_POST['lng'])) ? (float)$_POST['lng'] : null);
+
+            if ($lat !== null || $lng !== null) {
+                if ($lat === null || $lng === null || !\App\Services\DeliveryService::isKenyaCoordinate($lat, $lng)) {
+                    flash_set('error', 'Pinpoint map coordinates must be within Kenya boundaries.');
+                    redirect('checkout');
+                }
+            } elseif ($zoneId === null) {
+                flash_set('error', 'Please choose a delivery zone or pinpoint your delivery location on the map.');
+                redirect('checkout');
+            }
+
+            // Save address to address book if requested
+            if (!empty($_POST['save_address']) && !empty($streetDetails) && !empty($county) && !empty($area)) {
+                try {
+                    \App\Services\AccountService::createAddress((int)$customer['id'], [
+                        'recipient_name' => $recipientName,
+                        'phone'          => $normalizedPhone,
+                        'address_line_1' => $streetDetails,
+                        'address_line_2' => '',
+                        'county'         => $county,
+                        'area'           => $area,
+                        'is_default'     => 0,
+                    ]);
+                } catch (\Throwable $e) {
+                    // Non-fatal if address saving fails
+                }
+            }
+        }
+    }
+
+    $notes = substr(trim((string)($_POST['notes'] ?? $_POST['order_notes'] ?? '')), 0, 500);
+
+    $choices = [
+        'delivery_method' => $deliveryMethod,
+        'recipient_name'  => $recipientName,
+        'phone'           => $normalizedPhone,
+        'county'          => $county,
+        'area'            => $area,
+        'street_details'  => $streetDetails,
+        'zone_id'         => $zoneId,
+        'latitude'        => $lat,
+        'longitude'       => $lng,
+        'notes'           => $notes,
+    ];
+
+    $cartData = $cartService->getCartDetails();
+    if (empty($cartData['items'])) {
+        flash_set('error', 'Your shopping bag is empty.');
+        redirect('cart');
+    }
+
+    $clientIp = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
+
+    try {
+        $order = \App\Services\OrderService::createFromCart(
+            $cartData,
+            $choices,
+            (int)$customer['id'],
+            $idempotencyToken,
+            $clientIp
+        );
+
+        // Clear cart now that order is safely created in DB transaction
+        $cartService->clearCart();
+
+        // Initiate STK Push
+        $stkResult = \App\Services\MpesaService::initiateStkPush((int)$order['id'], $normalizedPhone);
+
+        if (!$stkResult['success']) {
+            flash_set('warning', $stkResult['message'] ?? 'Could not initiate phone prompt. You can retry on the payment page.');
+        }
+
+        redirect('checkout/pay/' . urlencode($order['order_number']));
+    } catch (\DomainException $de) {
+        flash_set('error', $de->getMessage());
+        redirect('checkout');
+    } catch (\Throwable $te) {
+        error_log("Order placement error: " . $te->getMessage());
+        flash_set('error', 'We encountered an issue creating your order. Please try again.');
+        redirect('checkout');
+    }
+});
+
+/**
+ * Route: GET /checkout/pay/{order_number}
+ * Check your phone / payment pending view
+ */
+$router->get('/checkout/pay/{order_number}', function (array $params) use ($cartService) {
+    if (!\App\Services\MpesaService::isConfigured()) {
+        redirect('cart');
+    }
+
+    $customer = CustomerAuthService::requireLogin('/checkout');
+    $orderNumber = trim($params['order_number'] ?? '');
+
+    $details = \App\Services\AccountService::getOrderDetails((int)$customer['id'], $orderNumber);
+    if (!$details) {
+        http_response_code(404);
+        $cart = $cartService->getCartDetails();
+        include dirname(__DIR__) . '/app/views/store/404.php';
+        return;
+    }
+
+    $order = $details['order'];
+    $payment = $details['payment'];
+
+    // If order is already paid, redirect straight to confirmation
+    if (($order['payment_status'] ?? '') === 'paid') {
+        redirect('checkout/confirmation/' . urlencode($orderNumber));
+    }
+
+    $cart = $cartService->getCartDetails();
+    include dirname(__DIR__) . '/app/views/store/checkout-pay.php';
+});
+
+/**
+ * Route: GET /checkout/status/{order_number} (JSON)
+ * Owner-only, rate-limited polling status endpoint
+ */
+$router->get('/checkout/status/{order_number}', function (array $params) {
+    $customer = CustomerAuthService::user();
+    if (!$customer) {
+        send_json_response(['error' => 'Unauthorized'], 401);
+    }
+
+    $orderNumber = trim($params['order_number'] ?? '');
+    $details = \App\Services\AccountService::getOrderDetails((int)$customer['id'], $orderNumber);
+    if (!$details) {
+        send_json_response(['error' => 'Order not found'], 404);
+    }
+
+    // Rate limiting: 60 polls per minute per session
+    $sessId = session_id() ?: ($_SERVER['REMOTE_ADDR'] ?? 'guest');
+    if (!check_route_rate_limit('status_poll_' . $sessId, 60, 60)) {
+        send_json_response(['error' => 'Too many requests. Please slow down.'], 429);
+    }
+
+    // Manual status query button pressed
+    if (isset($_GET['query']) && $_GET['query'] == '1') {
+        if (!check_route_rate_limit('status_query_' . (int)$customer['id'], 10, 60)) {
+            send_json_response(['error' => 'Status check limit exceeded. Please wait a moment.'], 429);
+        }
+
+        $order = $details['order'];
+        if (($order['payment_status'] ?? '') !== 'paid') {
+            \App\Services\MpesaService::queryStkPush((int)$order['id']);
+            // Refresh details
+            $details = \App\Services\AccountService::getOrderDetails((int)$customer['id'], $orderNumber);
+        }
+    }
+
+    $order = $details['order'];
+    $payment = $details['payment'];
+
+    $resultCode = $payment['result_code'] ?? null;
+    $msg = \App\Services\MpesaService::mapResultCodeToMessage($resultCode !== null ? (int)$resultCode : null);
+
+    send_json_response([
+        'status'         => $order['status'],
+        'payment_status' => $order['payment_status'],
+        'message'        => $msg,
+    ]);
+});
+
+/**
+ * Route: POST /checkout/retry/{order_number}
+ * Retry sending M-Pesa STK Push
+ */
+$router->post('/checkout/retry/{order_number}', function (array $params) {
+    $customer = CustomerAuthService::requireLogin('/checkout');
+    $orderNumber = trim($params['order_number'] ?? '');
+
+    $details = \App\Services\AccountService::getOrderDetails((int)$customer['id'], $orderNumber);
+    if (!$details) {
+        http_response_code(404);
+        include dirname(__DIR__) . '/app/views/store/404.php';
+        return;
+    }
+
+    if (!csrf_verify()) {
+        flash_set('error', 'Security token invalid. Please try again.');
+        redirect('checkout/pay/' . urlencode($orderNumber));
+    }
+
+    $order = $details['order'];
+    $res = \App\Services\MpesaService::retryStkPush((int)$order['id']);
+
+    if ($res['success']) {
+        flash_set('success', 'STK prompt sent to your phone! Please enter your M-Pesa PIN.');
+    } else {
+        flash_set('error', $res['message'] ?? 'Could not retry STK prompt.');
+    }
+
+    redirect('checkout/pay/' . urlencode($orderNumber));
+});
+
+/**
+ * Route: GET /checkout/confirmation/{order_number}
+ * Order confirmation view (IDOR-safe owner only)
+ */
+$router->get('/checkout/confirmation/{order_number}', function (array $params) use ($cartService) {
+    $customer = CustomerAuthService::requireLogin('/checkout');
+    $orderNumber = trim($params['order_number'] ?? '');
+
+    $details = \App\Services\AccountService::getOrderDetails((int)$customer['id'], $orderNumber);
+    if (!$details) {
+        http_response_code(404);
+        $cart = $cartService->getCartDetails();
+        include dirname(__DIR__) . '/app/views/store/404.php';
+        return;
+    }
+
+    $order = $details['order'];
+    $items = $details['items'];
+    $payment = $details['payment'];
+    $cart = $cartService->getCartDetails();
+
+    include dirname(__DIR__) . '/app/views/store/order-confirmation.php';
+});
+
+/**
+ * Route: POST /payments/callback/{secret}
+ * Safaricom Daraja STK Push Callback (No session, no CSRF)
+ * Old /mpesa/callback/{secret} is removed and strictly returns 404
+ */
+$router->post('/payments/callback/{secret}', function (array $params) {
+    $secret = (string)($params['secret'] ?? '');
+    $rawBody = file_get_contents('php://input') ?: '';
+    $clientIp = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
+
+    $result = \App\Services\MpesaService::handleCallback($secret, $rawBody, $clientIp);
+
+    http_response_code((int)($result['status_code'] ?? 200));
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode($result['response'] ?? ['ResultCode' => 0, 'ResultDesc' => 'Accepted']);
+    exit;
+});
+
+/* -------------------------------------------------------------------------
  * CONTENT & POLICY ROUTES (Phase 3B)
  * ------------------------------------------------------------------------- */
 $router->get('/about', function () use ($cartService) {

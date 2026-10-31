@@ -106,7 +106,7 @@ $prodWith127 = $mockProdLoader('127.0.0.1', null);
 assertCondition($prodWith127['db']['database'] === 'shopwise_production_real', "Production env with Host='127.0.0.1' strictly refuses shopwise_test override");
 
 // Sub-case 5b: Production with SHOPWISE_CONFIG=testing -> MUST STAY production database!
-$prodWithCli = $mockProdLoader('production.shopwise.co.ke', 'testing');
+$prodWithCli = $mockProdLoader('production.YOUR-SUBDOMAIN.kennedycheroben.co.ke', 'testing');
 assertCondition($prodWithCli['db']['database'] === 'shopwise_production_real', "Production env with SHOPWISE_CONFIG=testing strictly refuses shopwise_test override");
 
 // Sub-case 5c: Production with both Host=127.0.0.1 and SHOPWISE_CONFIG=testing -> MUST STAY production database!

@@ -29,7 +29,7 @@ include __DIR__ . '/partials/flash.php';
                     <div class="intro-block">
                         <span class="label-badge"><i class="bi bi-shop"></i> About <?= e(setting('store_name', 'ShopWise Kenya')) ?></span>
                         <h2 class="section-heading">Quality Everyday Essentials, Dispatched from Nairobi</h2>
-                        <p class="section-desc"><?= e(setting('store_name', 'ShopWise Kenya')) ?> is an established Kenyan online retailer operating from Nairobi. We provide individuals, families, and businesses with curated, genuine essentials backed by fast dispatch, fair transparent pricing in Kenyan Shillings, and secure M-Pesa payment.</p>
+                        <p class="section-desc"><?= e(setting('store_name', 'ShopWise Kenya')) ?> is an online retailer operating from Nairobi. We provide products with transparent pricing in Kenyan Shillings and direct M-Pesa payment.</p>
                         <a href="<?= e(url('shop')) ?>" class="btn-primary-action">Explore Catalog <i class="bi bi-arrow-right"></i></a>
                     </div>
                 </div>
@@ -40,10 +40,10 @@ include __DIR__ . '/partials/flash.php';
                     </div>
                     <div class="row mt-3 gy-3">
                         <div class="col-sm-6">
-                            <p class="supporting-text">Every product in our inventory is thoroughly inspected for authenticity and quality before dispatch from our Nairobi fulfillment center.</p>
+                            <p class="supporting-text">Every order is packaged and prepared for dispatch from our Nairobi fulfillment location.</p>
                         </div>
                         <div class="col-sm-6">
-                            <p class="supporting-text">We coordinate direct deliveries and parcel pickups across our active delivery zones and offer in-person pickup from our central Nairobi CBD depot.</p>
+                            <p class="supporting-text">We coordinate direct deliveries across our active delivery zones and offer in-person pickup from our central Nairobi CBD depot.</p>
                         </div>
                     </div>
                 </div>

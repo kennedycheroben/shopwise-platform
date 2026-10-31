@@ -200,7 +200,7 @@ cleanup() {
 
     # Clear rate limit files
     curl -s -X POST "$BASE_URL/cart/test/clear-rate-limits" >/dev/null 2>&1 || true
-    "$PHP_CMD" -r '
+    SHOPWISE_CONFIG=testing "$PHP_CMD" -r '
         require "app/bootstrap.php";
         \App\Services\CartService::clearRateLimits();
     ' >/dev/null 2>&1 || true
@@ -478,7 +478,7 @@ info "SECTION D: Contact Form Submissions & Security Controls"
 
 # Clear rate limits
 curl -s -X POST "$BASE_URL/cart/test/clear-rate-limits" >/dev/null 2>&1 || true
-"$PHP_CMD" -r '
+SHOPWISE_CONFIG=testing "$PHP_CMD" -r '
     require "app/bootstrap.php";
     \App\Services\CartService::clearRateLimits();
 '

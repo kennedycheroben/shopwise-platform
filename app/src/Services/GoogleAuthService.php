@@ -108,16 +108,14 @@ final class GoogleAuthService
         $codeVerifier = self::base64UrlEncode(random_bytes(64));
         $codeChallenge = self::base64UrlEncode(hash('sha256', $codeVerifier, true));
 
-        if (session_status() !== PHP_SESSION_ACTIVE) {
-            session_start();
-        }
-
+        $now = time();
         $_SESSION[self::STATE_SESSION_KEY] = [
             'state'         => $state,
             'nonce'         => $nonce,
             'code_verifier' => $codeVerifier,
             'return_url'    => CustomerAuthService::sanitizeReturnUrl($returnUrl),
-            'created_at'    => time(),
+            'created_at'    => $now,
+            'expires_at'    => $now + self::STATE_EXPIRY_SECONDS,
         ];
 
         $params = [
@@ -306,10 +304,6 @@ final class GoogleAuthService
      */
     public static function handleCallback(array $queryParams, string $ip): array
     {
-        if (session_status() !== PHP_SESSION_ACTIVE) {
-            session_start();
-        }
-
         $savedSession = $_SESSION[self::STATE_SESSION_KEY] ?? null;
         unset($_SESSION[self::STATE_SESSION_KEY]);
 
@@ -317,10 +311,15 @@ final class GoogleAuthService
             return [false, 'Sign-in session expired or invalid. Please try again.'];
         }
 
-        if (!empty($savedSession['expires_at']) && time() > (int)$savedSession['expires_at']) {
+        if (empty($savedSession['created_at']) && empty($savedSession['expires_at'])) {
+            return [false, 'Google sign-in attempt missing state timestamp. Please try again.'];
+        }
+
+        if (!empty($savedSession['created_at']) && (time() - (int)$savedSession['created_at']) > self::STATE_EXPIRY_SECONDS) {
             return [false, 'Google sign-in attempt expired. Please try again.'];
         }
-        if (!empty($savedSession['created_at']) && (time() - (int)$savedSession['created_at']) > self::STATE_EXPIRY_SECONDS) {
+
+        if (!empty($savedSession['expires_at']) && time() > (int)$savedSession['expires_at']) {
             return [false, 'Google sign-in attempt expired. Please try again.'];
         }
 

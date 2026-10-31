@@ -105,11 +105,6 @@ $footerCategories = array_slice($catalogService->getCategoryTree(), 0, 6);
                 <p class="mb-1">© <span>Copyright</span> <strong class="sitename"><?= e(setting('store_name', 'ShopWise Kenya')) ?></strong>. All Rights Reserved.</p>
             </div>
 
-            <div class="credits text-center">
-                <!-- Licensing information: https://bootstrapmade.com/license/ -->
-                Designed by <a href="https://bootstrapmade.com/" target="_blank" rel="noopener">BootstrapMade</a>
-            </div>
-
         </div>
     </div>
 

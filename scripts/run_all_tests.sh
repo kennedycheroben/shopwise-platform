@@ -159,6 +159,7 @@ run_suite "acceptance_2c2"   "scripts/acceptance_2c2.sh"
 run_suite "acceptance_3a"    "scripts/acceptance_3a.sh"
 run_suite "acceptance_3b"    "scripts/acceptance_3b.sh"
 run_suite "acceptance_4"     "scripts/acceptance_4.sh"
+run_suite "acceptance_5"     "scripts/acceptance_5.sh"
 
 echo -e "${BOLD}--- Running Suite: check_stock_parity.py ---${NC}"
 PARITY_LOG="$TMP_OUT_DIR/stock_parity.log"
@@ -247,6 +248,16 @@ parse_4() {
     echo "${passed:-0} ${failed:-0}"
 }
 
+parse_5() {
+    local log="$TMP_OUT_DIR/acceptance_5.log"
+    local clean_text
+    clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
+    local passed failed
+    passed=$(echo "$clean_text" | grep -oP 'Phase 5 Test Summary:\s*Passed:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    failed=$(echo "$clean_text" | grep -oP 'Failed:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    echo "${passed:-0} ${failed:-0}"
+}
+
 parse_parity() {
     local log="$TMP_OUT_DIR/stock_parity.log"
     local clean_text
@@ -268,10 +279,11 @@ read -r P_2C2 F_2C2 < <(parse_2c2)
 read -r P_3A F_3A < <(parse_3a)
 read -r P_3B F_3B < <(parse_3b)
 read -r P_4 F_4 < <(parse_4)
+read -r P_5 F_5 < <(parse_5)
 read -r P_PAR F_PAR < <(parse_parity)
 
-TOTAL_PASSED=$((P_2A + P_2B + P_2C1 + P_2C2 + P_3A + P_3B + P_4 + P_PAR))
-TOTAL_FAILED=$((F_2A + F_2B + F_2C1 + F_2C2 + F_3A + F_3B + F_4 + F_PAR))
+TOTAL_PASSED=$((P_2A + P_2B + P_2C1 + P_2C2 + P_3A + P_3B + P_4 + P_5 + P_PAR))
+TOTAL_FAILED=$((F_2A + F_2B + F_2C1 + F_2C2 + F_3A + F_3B + F_4 + F_5 + F_PAR))
 
 echo -e "${BOLD}${CYAN}==============================================================================${NC}"
 echo -e "${BOLD}${CYAN}                       TEST SUITE EXECUTION SUMMARY                           ${NC}"
@@ -285,6 +297,7 @@ printf "%-30s | %-12s | %-12s | %-10s\n" "acceptance_2c2.sh"   "$P_2C2" "$F_2C2"
 printf "%-30s | %-12s | %-12s | %-10s\n" "acceptance_3a.sh"    "$P_3A" "$F_3A" "$([ "$F_3A" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
 printf "%-30s | %-12s | %-12s | %-10s\n" "acceptance_3b.sh"    "$P_3B" "$F_3B" "$([ "$F_3B" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
 printf "%-30s | %-12s | %-12s | %-10s\n" "acceptance_4.sh"     "$P_4" "$F_4" "$([ "$F_4" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
+printf "%-30s | %-12s | %-12s | %-10s\n" "acceptance_5.sh"     "$P_5" "$F_5" "$([ "$F_5" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
 printf "%-30s | %-12s | %-12s | %-10s\n" "check_stock_parity.py" "$P_PAR" "$F_PAR" "$([ "$F_PAR" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
 echo "-------------------------------+--------------+--------------+------------"
 printf "%-30s | %-12s | %-12s | %-10s\n" "TOTAL" "$TOTAL_PASSED" "$TOTAL_FAILED" "$([ "$TOTAL_FAILED" -eq 0 ] && echo -e "${GREEN}ALL PASS${NC}" || echo -e "${RED}FAILURES${NC}")"

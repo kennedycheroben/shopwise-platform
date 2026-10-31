@@ -47,7 +47,10 @@ final class OrderService
         }
 
         // Filter status
-        if (!empty($filters['status']) && $filters['status'] !== 'all') {
+        if (!empty($filters['attention']) || (isset($filters['status']) && $filters['status'] === 'attention')) {
+            $where[] = "o.attention_reason IS NOT NULL AND o.attention_reason <> ''";
+            $isFiltered = true;
+        } elseif (!empty($filters['status']) && $filters['status'] !== 'all') {
             $where[] = "o.status = :status";
             $params[':status'] = $filters['status'];
             $isFiltered = true;
@@ -91,8 +94,10 @@ final class OrderService
         $scRows = $scStmt->fetchAll(PDO::FETCH_KEY_PAIR) ?: [];
 
         $totalAllOrders = (int)$pdo->query("SELECT COUNT(*) FROM orders")->fetchColumn();
+        $attentionCount = (int)$pdo->query("SELECT COUNT(*) FROM orders WHERE attention_reason IS NOT NULL AND attention_reason <> ''")->fetchColumn();
         $statusCounts = [
             'all'               => $totalAllOrders,
+            'attention'         => $attentionCount,
             'pending_payment'   => (int)($scRows['pending_payment'] ?? 0),
             'paid'              => (int)($scRows['paid'] ?? 0),
             'processing'        => (int)($scRows['processing'] ?? 0),
@@ -387,6 +392,11 @@ final class OrderService
                 }
             }
 
+            // Idempotent coupon release for unpaid or expired orders (paid orders keep coupon redemption)
+            if ($order['payment_status'] !== 'paid' || $isExpiry) {
+                CouponService::release($orderId, $pdo);
+            }
+
             // Update order status. If order was paid, payment_status stays 'paid' (requires manual refund)
             $upStmt = $pdo->prepare("
                 UPDATE orders
@@ -642,4 +652,647 @@ final class OrderService
             ], $remoteIp);
         });
     }
+
+    /**
+     * Generate unique order number in SW-YYYYMMDD-XXXXXX format with collision retry.
+     */
+    public static function generateOrderNumber(PDO $pdo): string
+    {
+        $prefix = 'SW-' . date('Ymd') . '-';
+        $chars = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+        for ($i = 0; $i < 10; $i++) {
+            $suffix = '';
+            $bytes = random_bytes(6);
+            for ($j = 0; $j < 6; $j++) {
+                $suffix .= $chars[ord($bytes[$j]) % strlen($chars)];
+            }
+            $orderNum = $prefix . $suffix;
+            $stmt = $pdo->prepare("SELECT id FROM orders WHERE order_number = :num LIMIT 1");
+            $stmt->execute([':num' => $orderNum]);
+            if (!$stmt->fetchColumn()) {
+                return $orderNum;
+            }
+        }
+        throw new \RuntimeException("Failed to generate a unique order number.");
+    }
+
+    /**
+     * Find order by order number.
+     */
+    public static function findByOrderNumber(string $orderNumber): ?array
+    {
+        $pdo = Database::getInstance();
+        $stmt = $pdo->prepare("SELECT id FROM orders WHERE order_number = :num LIMIT 1");
+        $stmt->execute([':num' => $orderNumber]);
+        $id = $stmt->fetchColumn();
+        if (!$id) {
+            return null;
+        }
+        return self::find((int)$id);
+    }
+
+    /**
+     * Create an order from current cart inside a single database transaction.
+     * Retries up to 3 times on deadlock or lock wait timeout.
+     */
+    public static function createFromCart(
+        array $cartData,
+        array $choices,
+        int $userId,
+        string $idempotencyToken,
+        string $ip
+    ): array {
+        $idempotencyToken = trim($idempotencyToken);
+        if ($idempotencyToken === '') {
+            throw new InvalidArgumentException("Idempotency token is required.");
+        }
+
+        $pdo = Database::getInstance();
+
+        // Idempotency fast-path check
+        $checkStmt = $pdo->prepare("SELECT order_number FROM orders WHERE idempotency_token = :token LIMIT 1");
+        $checkStmt->execute([':token' => $idempotencyToken]);
+        $existingOrderNum = $checkStmt->fetchColumn();
+        if ($existingOrderNum) {
+            $existing = self::findByOrderNumber((string)$existingOrderNum);
+            if ($existing) {
+                return $existing;
+            }
+        }
+
+        // Limit open pending orders per customer to 5
+        $pendingStmt = $pdo->prepare("SELECT COUNT(*) FROM orders WHERE user_id = :uid AND status = 'pending_payment'");
+        $pendingStmt->execute([':uid' => $userId]);
+        if ((int)$pendingStmt->fetchColumn() >= 5) {
+            throw new DomainException("You currently have 5 pending orders awaiting payment. Please complete payment or wait for expiry before placing a new order.");
+        }
+
+        // Limit checkout placement to 10 per hour per customer
+        $hourlyStmt = $pdo->prepare("SELECT COUNT(*) FROM orders WHERE user_id = :uid AND created_at >= NOW() - INTERVAL 1 HOUR");
+        $hourlyStmt->execute([':uid' => $userId]);
+        if ((int)$hourlyStmt->fetchColumn() >= 10) {
+            throw new DomainException("You have reached the checkout limit of 10 orders per hour. Please try again later.");
+        }
+
+        $items = $cartData['items'] ?? [];
+        if (empty($items)) {
+            throw new DomainException("Cannot place order: your cart is empty.");
+        }
+
+        $maxRetries = 3;
+        $attempt = 0;
+        while (true) {
+            $attempt++;
+            try {
+                return self::executeCreateOrder($cartData, $choices, $userId, $idempotencyToken, $ip);
+            } catch (\PDOException $e) {
+                $errCode = $e->errorInfo[1] ?? (int)$e->getCode();
+                if (($errCode === 1213 || $errCode === 1205 || str_contains($e->getMessage(), 'Deadlock')) && $attempt < $maxRetries) {
+                    usleep(rand(50000, 150000));
+                    continue;
+                }
+                if ($errCode === 1062 && str_contains($e->getMessage(), 'uq_orders_idempotency')) {
+                    $cStmt = $pdo->prepare("SELECT order_number FROM orders WHERE idempotency_token = :token LIMIT 1");
+                    $cStmt->execute([':token' => $idempotencyToken]);
+                    $orderNum = $cStmt->fetchColumn();
+                    if ($orderNum) {
+                        $ex = self::findByOrderNumber((string)$orderNum);
+                        if ($ex) {
+                            return $ex;
+                        }
+                    }
+                }
+                throw $e;
+            }
+        }
+    }
+
+    /**
+     * Internal execution of order creation within transaction.
+     */
+    private static function executeCreateOrder(
+        array $cartData,
+        array $choices,
+        int $userId,
+        string $idempotencyToken,
+        string $ip
+    ): array {
+        $pdo = Database::getInstance();
+        $pdo->beginTransaction();
+
+        try {
+            $cartItems = $cartData['items'];
+            $variantIds = array_map(fn($item) => (int)$item['variant_id'], $cartItems);
+            sort($variantIds);
+
+            // 1. Lock variant rows with SELECT ... FOR UPDATE in ascending order
+            $placeholders = implode(',', array_fill(0, count($variantIds), '?'));
+            $vLockStmt = $pdo->prepare("
+                SELECT pv.id, pv.product_id, pv.size, pv.color, pv.sku, pv.stock_qty, pv.price_override, pv.is_active as variant_is_active,
+                       p.name as product_name, p.base_price, p.is_active as product_is_active, p.deleted_at as product_deleted_at
+                FROM product_variants pv
+                JOIN products p ON p.id = pv.product_id
+                WHERE pv.id IN ($placeholders)
+                ORDER BY pv.id ASC
+                FOR UPDATE
+            ");
+            $vLockStmt->execute($variantIds);
+            $variants = [];
+            while ($row = $vLockStmt->fetch(PDO::FETCH_ASSOC)) {
+                $variants[(int)$row['id']] = $row;
+            }
+
+            // Verify availability and active status for each cart item
+            $lineSnapshots = [];
+            $computedSubtotal = 0.00;
+
+            foreach ($cartItems as $item) {
+                $vid = (int)$item['variant_id'];
+                $qty = (int)$item['quantity'];
+
+                if (!isset($variants[$vid])) {
+                    throw new DomainException("An item in your cart is no longer available.");
+                }
+
+                $variant = $variants[$vid];
+                if ((int)$variant['product_is_active'] !== 1 || $variant['product_deleted_at'] !== null || (int)$variant['variant_is_active'] !== 1) {
+                    throw new DomainException("Item '{$variant['product_name']}' is currently unavailable.");
+                }
+
+                if ((int)$variant['stock_qty'] < $qty) {
+                    throw new DomainException("Insufficient stock for '{$variant['product_name']}'. Only {$variant['stock_qty']} unit(s) remaining.");
+                }
+
+                // Determine official unit price from database snapshot
+                $unitPrice = $variant['price_override'] !== null ? (float)$variant['price_override'] : (float)$variant['base_price'];
+                $lineTotal = round($unitPrice * $qty, 2);
+                $computedSubtotal += $lineTotal;
+
+                $lineSnapshots[] = [
+                    'product_id'   => (int)$variant['product_id'],
+                    'variant_id'   => $vid,
+                    'product_name' => (string)$variant['product_name'],
+                    'size'         => $variant['size'],
+                    'color'        => $variant['color'],
+                    'sku'          => (string)$variant['sku'],
+                    'unit_price'   => $unitPrice,
+                    'quantity'     => $qty,
+                    'line_total'   => $lineTotal,
+                ];
+            }
+
+            // 2. Decrement stock for all lines
+            foreach ($lineSnapshots as $line) {
+                $dStmt = $pdo->prepare("
+                    UPDATE product_variants 
+                    SET stock_qty = stock_qty - ? 
+                    WHERE id = ? AND stock_qty >= ?
+                ");
+                $dStmt->execute([$line['quantity'], $line['variant_id'], $line['quantity']]);
+                if ($dStmt->rowCount() !== 1) {
+                    throw new DomainException("Stock for '{$line['product_name']}' was reserved by another customer. Please review your cart.");
+                }
+            }
+
+            // 3. Compute delivery fee
+            $deliveryMethod = ($choices['delivery_method'] ?? 'delivery') === 'pickup' ? 'pickup' : 'delivery';
+            $deliveryPricingMethod = 'pickup';
+            $deliveryFee = 0.00;
+            $distanceKm = null;
+            $lat = null;
+            $lng = null;
+
+            if ($deliveryMethod === 'pickup') {
+                $deliveryFee = 0.00;
+                $deliveryPricingMethod = 'pickup';
+            } else {
+                // Check if distance-based (coordinates supplied) or zone-based
+                if (isset($choices['latitude']) && isset($choices['longitude']) && $choices['latitude'] !== '' && $choices['longitude'] !== '') {
+                    $lat = (float)$choices['latitude'];
+                    $lng = (float)$choices['longitude'];
+                    if (!DeliveryService::isKenyaCoordinate($lat, $lng)) {
+                        throw new DomainException("Selected map coordinates are outside of Kenya delivery boundaries.");
+                    }
+                    $distQuote = DeliveryService::quoteDistance($lat, $lng, $computedSubtotal);
+                    $deliveryFee = (float)$distQuote['fee'];
+                    $distanceKm = (float)$distQuote['distance_km'];
+                    $deliveryPricingMethod = 'distance';
+                } elseif (!empty($choices['zone_id'])) {
+                    $zoneQuote = DeliveryService::quoteZone((int)$choices['zone_id'], $computedSubtotal);
+                    $deliveryFee = (float)$zoneQuote['fee'];
+                    $deliveryPricingMethod = 'zone';
+                } else {
+                    throw new DomainException("Please select a valid delivery zone or pinpoint your delivery location.");
+                }
+            }
+
+            // 4. Coupon evaluation & redemption inside transaction
+            $couponCode = trim((string)($cartData['coupon_code'] ?? ($choices['coupon_code'] ?? '')));
+            $discount = 0.00;
+            $couponId = null;
+
+            if ($couponCode !== '') {
+                $eval = CouponService::evaluate($couponCode, $computedSubtotal, $userId, $deliveryFee);
+                if (!$eval['valid']) {
+                    throw new DomainException($eval['message'] ?? 'Coupon code cannot be applied to this order.');
+                }
+                $discount = (float)$eval['discount'];
+                $couponId = (int)$eval['coupon']['id'];
+            }
+
+            // 5. Compute final order total and enforce whole-shilling rule
+            $orderTotal = ($computedSubtotal + $deliveryFee) - $discount;
+            if (floor($orderTotal) != $orderTotal || $orderTotal < 1.0) {
+                throw new DomainException("Final order total must be a whole shilling amount of at least KES 1.");
+            }
+
+            // 6. Generate order number and expiry timestamp
+            $orderNumber = self::generateOrderNumber($pdo);
+            $expiryMinutes = (int)setting('order_expiry_minutes', 30);
+            $expiresAt = date('Y-m-d H:i:s', time() + ($expiryMinutes * 60));
+
+            // Customer details
+            $recipientName = trim((string)($choices['recipient_name'] ?? ''));
+            if ($recipientName === '') {
+                throw new DomainException("Recipient name is required.");
+            }
+
+            $rawPhone = (string)($choices['phone'] ?? '');
+            $normalizedPhone = MpesaService::normalizePhone($rawPhone);
+            if (!$normalizedPhone) {
+                throw new DomainException("A valid Kenyan M-Pesa phone number is required (e.g. 07XXXXXXXX or 01XXXXXXXX).");
+            }
+
+            $county = !empty($choices['county']) ? trim((string)$choices['county']) : null;
+            $area = !empty($choices['area']) ? trim((string)$choices['area']) : null;
+            $streetDetails = !empty($choices['street_details']) ? trim((string)$choices['street_details']) : null;
+            $customerNotes = !empty($choices['notes']) ? substr(trim((string)$choices['notes']), 0, 500) : null;
+
+            // 7. Insert into orders table
+            $oStmt = $pdo->prepare("
+                INSERT INTO orders (
+                    order_number, user_id, status, payment_status, subtotal, delivery_fee, discount, total,
+                    delivery_method, delivery_pricing_method, delivery_distance_km, recipient_name, phone,
+                    county, area, street_details, latitude, longitude, customer_notes, stock_released,
+                    idempotency_token, expires_at, created_at, updated_at
+                ) VALUES (
+                    :order_number, :user_id, 'pending_payment', 'unpaid', :subtotal, :delivery_fee, :discount, :total,
+                    :delivery_method, :delivery_pricing_method, :delivery_distance_km, :recipient_name, :phone,
+                    :county, :area, :street_details, :latitude, :longitude, :customer_notes, 0,
+                    :idempotency_token, :expires_at, NOW(), NOW()
+                )
+            ");
+            $oStmt->execute([
+                ':order_number'            => $orderNumber,
+                ':user_id'                 => $userId,
+                ':subtotal'                => $computedSubtotal,
+                ':delivery_fee'            => $deliveryFee,
+                ':discount'                => $discount,
+                ':total'                   => $orderTotal,
+                ':delivery_method'         => $deliveryMethod,
+                ':delivery_pricing_method' => $deliveryPricingMethod,
+                ':delivery_distance_km'    => $distanceKm,
+                ':recipient_name'          => $recipientName,
+                ':phone'                   => $normalizedPhone,
+                ':county'                  => $county,
+                ':area'                    => $area,
+                ':street_details'          => $streetDetails,
+                ':latitude'                => $lat,
+                ':longitude'               => $lng,
+                ':customer_notes'          => $customerNotes,
+                ':idempotency_token'       => $idempotencyToken,
+                ':expires_at'              => $expiresAt,
+            ]);
+
+            $orderId = (int)$pdo->lastInsertId();
+
+            // 8. Insert order items & record inventory movement
+            $oiStmt = $pdo->prepare("
+                INSERT INTO order_items (
+                    order_id, product_id, variant_id, product_name, size, color, sku,
+                    unit_price, quantity, line_total, created_at
+                ) VALUES (
+                    :oid, :pid, :vid, :name, :size, :color, :sku,
+                    :price, :qty, :total, NOW()
+                )
+            ");
+
+            $imStmt = $pdo->prepare("
+                INSERT INTO inventory_movements (variant_id, change_qty, reason, order_id, actor_user_id, note)
+                VALUES (:vid, :change, 'sale', :oid, :actor, 'Customer checkout placement')
+            ");
+
+            foreach ($lineSnapshots as $line) {
+                $oiStmt->execute([
+                    ':oid'   => $orderId,
+                    ':pid'   => $line['product_id'],
+                    ':vid'   => $line['variant_id'],
+                    ':name'  => $line['product_name'],
+                    ':size'  => $line['size'],
+                    ':color' => $line['color'],
+                    ':sku'   => $line['sku'],
+                    ':price' => $line['unit_price'],
+                    ':qty'   => $line['quantity'],
+                    ':total' => $line['line_total'],
+                ]);
+
+                $imStmt->execute([
+                    ':vid'    => $line['variant_id'],
+                    ':change' => -((int)$line['quantity']),
+                    ':oid'    => $orderId,
+                    ':actor'  => $userId,
+                ]);
+            }
+
+            // 9. Redeem coupon if applicable
+            if ($couponId !== null && $discount > 0) {
+                CouponService::redeem($couponId, $orderId, $userId, $discount, $pdo);
+            }
+
+            // 10. Insert order status history
+            $hStmt = $pdo->prepare("
+                INSERT INTO order_status_history (order_id, from_status, to_status, note, actor_user_id, created_at)
+                VALUES (:oid, NULL, 'pending_payment', 'Order created awaiting M-Pesa payment', :actor, NOW())
+            ");
+            $hStmt->execute([':oid' => $orderId, ':actor' => $userId]);
+
+            // 11. Insert initial payment record
+            $pStmt = $pdo->prepare("
+                INSERT INTO payments (order_id, method, status, amount, phone, created_at, updated_at)
+                VALUES (:oid, 'mpesa', 'initiated', :amt, :phone, NOW(), NOW())
+            ");
+            $pStmt->execute([
+                ':oid'   => $orderId,
+                ':amt'   => $orderTotal,
+                ':phone' => $normalizedPhone,
+            ]);
+
+            // 12. Audit log
+            AuditLogger::log($userId, 'order_created', 'order', $orderId, [
+                'order_number' => $orderNumber,
+                'total'        => $orderTotal,
+            ], $ip);
+
+            // 13. Queue customer order placed email
+            MailerService::sendOrderPlacedEmail($orderId);
+
+            $pdo->commit();
+
+            return self::find($orderId);
+        } catch (\Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * Mark an order as paid from verified M-Pesa callback or query.
+     */
+    public static function transitionToPaid(int $orderId, string $mpesaReceipt, ?string $rawCallback = null, ?string $ip = null, ?int $paymentId = null): void
+    {
+        Database::transaction(function (PDO $pdo) use ($orderId, $mpesaReceipt, $rawCallback, $ip, $paymentId) {
+            $stmt = $pdo->prepare("SELECT id, status, payment_status, total, order_number, user_id FROM orders WHERE id = :id FOR UPDATE");
+            $stmt->execute([':id' => $orderId]);
+            $order = $stmt->fetch(PDO::FETCH_ASSOC);
+            if (!$order) {
+                throw new DomainException("Order not found.");
+            }
+
+            if ($order['status'] === 'paid') {
+                return; // Idempotent no-op
+            }
+
+            if ($order['status'] !== 'pending_payment') {
+                throw new DomainException("Cannot mark order paid from status '{$order['status']}'.");
+            }
+
+            // Update order
+            $up = $pdo->prepare("UPDATE orders SET status = 'paid', payment_status = 'paid' WHERE id = :id AND status = 'pending_payment'");
+            $up->execute([':id' => $orderId]);
+
+            // Update payment record (target specific payment row or latest pending attempt)
+            if ($paymentId !== null) {
+                $pUp = $pdo->prepare("
+                    UPDATE payments 
+                    SET status = 'success', mpesa_receipt = :rcpt, raw_callback = COALESCE(:raw, raw_callback), updated_at = NOW()
+                    WHERE id = :pid
+                ");
+                $pUp->execute([
+                    ':rcpt' => $mpesaReceipt,
+                    ':raw'  => $rawCallback,
+                    ':pid'  => $paymentId,
+                ]);
+            } else {
+                $pUp = $pdo->prepare("
+                    UPDATE payments 
+                    SET status = 'success', mpesa_receipt = :rcpt, raw_callback = COALESCE(:raw, raw_callback), updated_at = NOW()
+                    WHERE order_id = :oid AND status IN ('pending', 'pending_verification', 'initiated')
+                    ORDER BY id DESC LIMIT 1
+                ");
+                $pUp->execute([
+                    ':rcpt' => $mpesaReceipt,
+                    ':raw'  => $rawCallback,
+                    ':oid'  => $orderId,
+                ]);
+            }
+
+            // Insert status history
+            $hStmt = $pdo->prepare("
+                INSERT INTO order_status_history (order_id, from_status, to_status, note, actor_user_id, created_at)
+                VALUES (:oid, 'pending_payment', 'paid', :note, NULL, NOW())
+            ");
+            $hStmt->execute([
+                ':oid'  => $orderId,
+                ':note' => "M-Pesa payment confirmed: {$mpesaReceipt}",
+            ]);
+
+            // Audit
+            $remoteIp = $ip ?: ($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1');
+            AuditLogger::log(null, 'order_paid_mpesa', 'order', $orderId, [
+                'order_number' => $order['order_number'],
+                'receipt'      => $mpesaReceipt,
+                'amount'       => $order['total'],
+            ], $remoteIp);
+
+            // Queue notifications
+            MailerService::sendOrderPaidEmail($orderId, $mpesaReceipt);
+            MailerService::sendAdminNewPaidOrderEmail($orderId, $mpesaReceipt);
+        });
+    }
+
+    /**
+     * Handle late payment success after order has already expired or been cancelled.
+     * Attempts to re-reserve stock. If unavailable, sets attention_reason and alerts admin.
+     */
+    public static function handleLateSuccessAfterExpiry(int $orderId, string $mpesaReceipt, ?string $rawCallback = null, ?string $ip = null): array
+    {
+        return Database::transaction(function (PDO $pdo) use ($orderId, $mpesaReceipt, $rawCallback, $ip) {
+            $stmt = $pdo->prepare("SELECT id, status, payment_status, total, order_number, user_id, stock_released FROM orders WHERE id = :id FOR UPDATE");
+            $stmt->execute([':id' => $orderId]);
+            $order = $stmt->fetch(PDO::FETCH_ASSOC);
+            if (!$order) {
+                throw new DomainException("Order not found.");
+            }
+
+            // Always mark payment as success with receipt
+            $pUp = $pdo->prepare("
+                UPDATE payments 
+                SET status = 'success', mpesa_receipt = :rcpt, raw_callback = COALESCE(:raw, raw_callback), updated_at = NOW()
+                WHERE order_id = :oid
+            ");
+            $pUp->execute([
+                ':rcpt' => $mpesaReceipt,
+                ':raw'  => $rawCallback,
+                ':oid'  => $orderId,
+            ]);
+
+            // Fetch order items to check availability
+            $iStmt = $pdo->prepare("SELECT variant_id, quantity FROM order_items WHERE order_id = :oid");
+            $iStmt->execute([':oid' => $orderId]);
+            $items = $iStmt->fetchAll(PDO::FETCH_ASSOC);
+
+            $allAvailable = true;
+            foreach ($items as $item) {
+                $vStmt = $pdo->prepare("SELECT stock_qty FROM product_variants WHERE id = :vid FOR UPDATE");
+                $vStmt->execute([':vid' => $item['variant_id']]);
+                $currentStock = (int)$vStmt->fetchColumn();
+                if ($currentStock < (int)$item['quantity']) {
+                    $allAvailable = false;
+                    break;
+                }
+            }
+
+            if ($allAvailable && !empty($items)) {
+                // Re-reserve stock
+                foreach ($items as $item) {
+                    $dStmt = $pdo->prepare("UPDATE product_variants SET stock_qty = stock_qty - ? WHERE id = ? AND stock_qty >= ?");
+                    $dStmt->execute([$item['quantity'], $item['variant_id'], $item['quantity']]);
+
+                    $mStmt = $pdo->prepare("
+                        INSERT INTO inventory_movements (variant_id, change_qty, reason, order_id, actor_user_id, note)
+                        VALUES (:vid, :change, 'sale', :oid, NULL, 'Late payment re-reserved stock')
+                    ");
+                    $mStmt->execute([
+                        ':vid'    => $item['variant_id'],
+                        ':change' => -((int)$item['quantity']),
+                        ':oid'    => $orderId,
+                    ]);
+                }
+
+                // Move order to paid
+                $up = $pdo->prepare("UPDATE orders SET status = 'paid', payment_status = 'paid', stock_released = 0, attention_reason = NULL WHERE id = :id");
+                $up->execute([':id' => $orderId]);
+
+                $hStmt = $pdo->prepare("
+                    INSERT INTO order_status_history (order_id, from_status, to_status, note, actor_user_id, created_at)
+                    VALUES (:oid, :from, 'paid', :note, NULL, NOW())
+                ");
+                $hStmt->execute([
+                    ':oid'  => $orderId,
+                    ':from' => $order['status'],
+                    ':note' => "Late payment confirmed after {$order['status']}. Stock successfully re-reserved. Receipt: {$mpesaReceipt}",
+                ]);
+
+                MailerService::sendOrderPaidEmail($orderId, $mpesaReceipt);
+                MailerService::sendAdminNewPaidOrderEmail($orderId, $mpesaReceipt);
+
+                return ['status' => 'paid', 'stock_re_reserved' => true];
+            } else {
+                // Stock unavailable: set attention_reason and alert admin
+                $reason = 'Paid but stock unavailable, refund or fulfil';
+                $up = $pdo->prepare("UPDATE orders SET payment_status = 'paid', attention_reason = :reason WHERE id = :id");
+                $up->execute([':reason' => $reason, ':id' => $orderId]);
+
+                $hStmt = $pdo->prepare("
+                    INSERT INTO order_status_history (order_id, from_status, to_status, note, actor_user_id, created_at)
+                    VALUES (:oid, :from, :to, :note, NULL, NOW())
+                ");
+                $hStmt->execute([
+                    ':oid'  => $orderId,
+                    ':from' => $order['status'],
+                    ':to'   => $order['status'],
+                    ':note' => "Late payment received ({$mpesaReceipt}), but stock was no longer available. Requires admin refund or fulfillment.",
+                ]);
+
+                MailerService::sendAdminLatePaymentStockAlertEmail($orderId, $mpesaReceipt);
+
+                return ['status' => $order['status'], 'stock_re_reserved' => false, 'attention_reason' => $reason];
+            }
+        });
+    }
+
+    /**
+     * Expire an unpaid order, restore reserved stock, release coupon redemption and mark payments timed out.
+     */
+    public static function expire(int $orderId, ?string $note = null): bool
+    {
+        return Database::transaction(function (PDO $pdo) use ($orderId, $note) {
+            $stmt = $pdo->prepare("SELECT id, status, stock_released, order_number, user_id FROM orders WHERE id = :id FOR UPDATE");
+            $stmt->execute([':id' => $orderId]);
+            $order = $stmt->fetch(PDO::FETCH_ASSOC);
+            if (!$order || $order['status'] !== 'pending_payment') {
+                return false;
+            }
+
+            // 1. Restore stock if not already released
+            if ((int)$order['stock_released'] === 0) {
+                $iStmt = $pdo->prepare("SELECT variant_id, quantity FROM order_items WHERE order_id = :oid");
+                $iStmt->execute([':oid' => $orderId]);
+                $items = $iStmt->fetchAll(PDO::FETCH_ASSOC);
+
+                foreach ($items as $item) {
+                    $vStmt = $pdo->prepare("UPDATE product_variants SET stock_qty = stock_qty + :q WHERE id = :vid");
+                    $vStmt->execute([':q' => $item['quantity'], ':vid' => $item['variant_id']]);
+
+                    $mStmt = $pdo->prepare("
+                        INSERT INTO inventory_movements (variant_id, change_qty, reason, order_id, actor_user_id, note)
+                        VALUES (:vid, :q, 'expiry_restore', :oid, NULL, 'Order expired auto-restore')
+                    ");
+                    $mStmt->execute([
+                        ':vid' => $item['variant_id'],
+                        ':q'   => $item['quantity'],
+                        ':oid' => $orderId,
+                    ]);
+                }
+            }
+
+            // 2. Release coupon redemption if any
+            CouponService::release($orderId, $pdo);
+
+            // 3. Mark pending or initiated payments as timeout
+            $pStmt = $pdo->prepare("
+                UPDATE payments 
+                SET status = 'timeout', result_desc = 'Order expired before payment was completed', updated_at = NOW()
+                WHERE order_id = :oid AND status IN ('initiated', 'pending')
+            ");
+            $pStmt->execute([':oid' => $orderId]);
+
+            // 4. Update order status
+            $up = $pdo->prepare("UPDATE orders SET status = 'expired', stock_released = 1 WHERE id = :id AND status = 'pending_payment'");
+            $up->execute([':id' => $orderId]);
+
+            // 5. History & Audit
+            $hStmt = $pdo->prepare("
+                INSERT INTO order_status_history (order_id, from_status, to_status, note, actor_user_id, created_at)
+                VALUES (:oid, 'pending_payment', 'expired', :note, NULL, NOW())
+            ");
+            $hStmt->execute([
+                ':oid'  => $orderId,
+                ':note' => $note ?: 'Order expired due to non-payment within timeout window',
+            ]);
+
+            AuditLogger::log(null, 'order_expired', 'order', $orderId, [
+                'order_number' => $order['order_number'],
+                'note'         => $note ?: 'Order expired',
+            ], '127.0.0.1');
+
+            // 6. Queue customer expiry notification email
+            MailerService::sendOrderStatusEmail($orderId, 'expired', 'Your order was cancelled because payment was not completed before expiry.');
+
+            return true;
+        });
+    }
 }
+

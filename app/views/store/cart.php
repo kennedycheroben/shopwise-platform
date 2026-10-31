@@ -194,8 +194,12 @@ $notices = $cart['notices'] ?? [];
                                 <span class="fs-4 fw-bold text-primary"><?= e(format_money($finalSubtotal)) ?></span>
                             </div>
 
-                            <!-- Disabled Checkout Button per Brief -->
-                            <button class="btn btn-primary w-100 py-2 proceed-btn mb-3" type="button" disabled aria-disabled="true">Checkout opens soon</button>
+                            <!-- Checkout Button -->
+                            <?php if (\App\Services\MpesaService::isConfigured()): ?>
+                                <a href="<?= e(url('checkout')) ?>" class="btn btn-primary w-100 py-2 proceed-btn mb-3 d-inline-block text-center text-decoration-none">Proceed to Checkout</a>
+                            <?php else: ?>
+                                <button class="btn btn-primary w-100 py-2 proceed-btn mb-3" type="button" disabled aria-disabled="true">Checkout opens soon</button>
+                            <?php endif; ?>
 
                             <div class="text-center text-muted small">
                                 <i class="bi bi-shield-lock text-success me-1"></i>

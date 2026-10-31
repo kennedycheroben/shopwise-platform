@@ -3,7 +3,7 @@
 $adminUser = $adminUser ?? \App\Services\AdminAuthService::user() ?? [
     'first_name' => 'Admin',
     'last_name' => 'User',
-    'email' => 'admin@shopwise.co.ke',
+    'email' => 'admin@example.com',
     'role' => 'staff',
 ];
 

@@ -225,6 +225,8 @@ class ProductService
             $bpVal = filter_var($data['base_price'], FILTER_VALIDATE_FLOAT);
             if ($bpVal === false || $bpVal <= 0) {
                 $errors['base_price'] = 'Base price must be a positive number greater than 0.';
+            } elseif (floor($bpVal) != $bpVal) {
+                $errors['base_price'] = 'Base price must be a whole shilling amount (no cents or fractions).';
             } else {
                 $basePrice = round($bpVal, 2);
             }
@@ -235,6 +237,8 @@ class ProductService
             $capVal = filter_var($data['compare_at_price'], FILTER_VALIDATE_FLOAT);
             if ($capVal === false || $capVal <= 0) {
                 $errors['compare_at_price'] = 'Compare-at price must be a valid positive number.';
+            } elseif (floor($capVal) != $capVal) {
+                $errors['compare_at_price'] = 'Compare-at price must be a whole shilling amount (no cents or fractions).';
             } elseif ($basePrice !== null && $capVal <= $basePrice) {
                 $errors['compare_at_price'] = 'Compare-at price must be strictly greater than the base price.';
             } else {
@@ -498,9 +502,13 @@ class ProductService
             foreach ($images as $imgPath) {
                 if (str_starts_with($imgPath, 'uploads/')) {
                     $full = dirname(__DIR__, 3) . '/public/' . $imgPath;
-                    if (file_exists($full)) @unlink($full);
+                    if (file_exists($full)) {
+                        unlink($full);
+                    }
                     $thumb = preg_replace('/(\.[a-zA-Z0-9]+)$/', '_thumb$1', $full);
-                    if (file_exists($thumb)) @unlink($thumb);
+                    if (file_exists($thumb)) {
+                        unlink($thumb);
+                    }
                 }
             }
 

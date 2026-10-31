@@ -86,13 +86,7 @@ if [ -f "$ROOT_DIR/public/uploads/.htaccess" ]; then
     chmod 0644 "$UPLOADS_TEST_DIR/.htaccess"
 fi
 
-# 7. Initialize dedicated test rate limits directory
-RATE_LIMITS_TEST_DIR="$ROOT_DIR/app/storage/rate_limits_test"
-if [ ! -d "$RATE_LIMITS_TEST_DIR" ]; then
-    mkdir -p "$RATE_LIMITS_TEST_DIR"
-    chmod 0755 "$RATE_LIMITS_TEST_DIR"
-fi
+# 7. Initialize dedicated test rate limits directory via web server
 curl -s -X POST http://127.0.0.1/shopwise-platform/public/cart/test/clear-rate-limits > /dev/null 2>&1 || true
-rm -f "$RATE_LIMITS_TEST_DIR"/*.json 2>/dev/null || true
 
 echo "=== Test Database '$DB_NAME' successfully initialized and ready for test suites ==="
