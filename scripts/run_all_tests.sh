@@ -20,7 +20,7 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-PHP_CMD="/opt/lampp/bin/php"
+PHP_CMD="${PHP_CMD:-/opt/lampp/bin/php}"
 if [ ! -x "$PHP_CMD" ]; then
     PHP_CMD="php"
 fi
@@ -107,7 +107,7 @@ while IFS= read -r file; do
         echo -e "  [${RED}SYNTAX ERROR${NC}] $file"
         LINT_ERRORS=$((LINT_ERRORS + 1))
     fi
-done < <(find app public -type f -name "*.php")
+done < <(find app public -path "app/storage" -prune -o -type f -name "*.php" -print)
 
 if [ "$LINT_ERRORS" -gt 0 ]; then
     echo -e "${RED}LINT FAILED: $LINT_ERRORS syntax error(s) detected.${NC}"

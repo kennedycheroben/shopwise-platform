@@ -102,7 +102,7 @@ run_sql() {
     fi
 }
 
-PHP_BIN="/opt/lampp/bin/php"
+PHP_BIN="${PHP_CMD:-${PHP_BIN:-/opt/lampp/bin/php}}"
 if [ ! -x "$PHP_BIN" ]; then
     PHP_BIN="php"
 fi

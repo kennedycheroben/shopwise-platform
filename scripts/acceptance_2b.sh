@@ -22,6 +22,11 @@ if [ ! -x "$MYSQL_CMD" ]; then
     MYSQL_CMD="$(command -v mysql || true)"
 fi
 
+PHP_CMD="${PHP_CMD:-/opt/lampp/bin/php}"
+if [ ! -x "$PHP_CMD" ]; then
+    PHP_CMD="$(command -v php || true)"
+fi
+
 DB_USER="${DB_USER:-root}"
 DB_PASS="${DB_PASS:-}"
 DB_NAME="${DB_NAME:-shopwise_test}"
@@ -183,7 +188,7 @@ cleanup() {
     fi
 
     # 3. Clean orphan files under public/uploads/products/ not referenced by product_images
-    ORPHANS_REMOVED=$(/opt/lampp/bin/php -r '
+    ORPHANS_REMOVED=$("$PHP_CMD" -r '
         require "app/bootstrap.php";
         use App\Database\Database;
         $pdo = Database::getInstance();
@@ -366,7 +371,7 @@ get_csrf_token() {
 # ==============================================================================
 info "Step 1: Preparing Throwaway Accounts"
 
-HASHED_PASS=$(/opt/lampp/bin/php -r "echo password_hash('$TEST_PASSWORD', PASSWORD_DEFAULT);")
+HASHED_PASS=$("$PHP_CMD" -r "echo password_hash('$TEST_PASSWORD', PASSWORD_DEFAULT);")
 
 run_sql "
 INSERT INTO users (role, first_name, last_name, email, password_hash, status, email_verified_at)
@@ -640,13 +645,18 @@ fi
 # Generate 3 valid test images using PHP GD
 IMG1="$TMP_DIR/test1_${RAND_ID}.jpg"
 IMG2="$TMP_DIR/test2_${RAND_ID}.png"
-if /opt/lampp/bin/php -r "exit(function_exists('imagewebp') ? 0 : 1);"; then
+# Check if the web server PHP runtime has imagewebp capability
+APACHE_PHP="/opt/lampp/bin/php"
+if [ ! -x "$APACHE_PHP" ]; then
+    APACHE_PHP="$PHP_CMD"
+fi
+if "$APACHE_PHP" -r "exit(function_exists('imagewebp') ? 0 : 1);"; then
     IMG3="$TMP_DIR/test3_${RAND_ID}.webp"
 else
     IMG3="$TMP_DIR/test3_${RAND_ID}.jpg"
 fi
 
-/opt/lampp/bin/php -r "
+"$PHP_CMD" -r "
     \$im1 = imagecreatetruecolor(600, 600);
     imagefill(\$im1, 0, 0, imagecolorallocate(\$im1, 200, 50, 50));
     imagejpeg(\$im1, '$IMG1');
@@ -807,7 +817,7 @@ fi
 
 # 5. Image with embedded PHP in EXIF/comment
 ATTACK_EMBEDDED="$TMP_DIR/embedded_${RAND_ID}.jpg"
-/opt/lampp/bin/php -r "
+"$PHP_CMD" -r "
     \$im = imagecreatetruecolor(400, 400);
     imagejpeg(\$im, '$ATTACK_EMBEDDED');
     file_put_contents('$ATTACK_EMBEDDED', '/* <?php phpinfo(); ?> */', FILE_APPEND);
@@ -1151,7 +1161,7 @@ info "Check (h): Security Hardening (SQLi, XSS, CSRF, IDOR)"
 # 1. SQL Injection strings in search and filters
 SQLI_TESTS=("' OR 1=1 --" "'; DROP TABLE products; --" "' UNION SELECT NULL--")
 for sqli in "${SQLI_TESTS[@]}"; do
-    ENCODED=$(/opt/lampp/bin/php -r 'echo urlencode($argv[1]);' -- "$sqli")
+    ENCODED=$("$PHP_CMD" -r 'echo urlencode($argv[1]);' -- "$sqli")
     http_req "GET" "$BASE_URL/admin/products/?search=$ENCODED" "$COOKIE_ADMIN"
     if [ "$HTTP_CODE" = "200" ] && check_php_errors "$BODY_FILE"; then
         pass "SQL injection probe safely handled: $sqli"

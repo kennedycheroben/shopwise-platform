@@ -35,7 +35,7 @@ if os.path.exists(seed_path):
         seed_stock[var_id] = stock
 
 # 2. Query live database using PHP bootstrap / PDO
-php_bin = "/opt/lampp/bin/php" if os.path.exists("/opt/lampp/bin/php") else "php"
+php_bin = os.environ.get("PHP_CMD", "/opt/lampp/bin/php" if os.path.exists("/opt/lampp/bin/php") else "php")
 query_code = r"""
 require 'app/bootstrap.php';
 $pdo = App\Database\Database::getInstance();

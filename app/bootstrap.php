@@ -120,7 +120,8 @@ if (session_status() === PHP_SESSION_NONE && php_sapi_name() !== 'cli') {
     ini_set('session.use_only_cookies', '1');
 
     $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ||
-               (!empty($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443);
+               (!empty($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443) ||
+               (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower($_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https');
 
     session_set_cookie_params([
         'lifetime' => 0,

@@ -80,7 +80,8 @@ $router->dispatch();
 echo $notFoundCalled ? "NOT_FOUND_404" : "ROUTE_FOUND";
 PHP;
 
-    $cmd = '/opt/lampp/bin/php -r ' . escapeshellarg($prodScript);
+    $phpBin = getenv('PHP_CMD') ?: (file_exists('/opt/lampp/bin/php') ? '/opt/lampp/bin/php' : 'php');
+    $cmd = escapeshellcmd($phpBin) . ' -r ' . escapeshellarg($prodScript);
     $output = trim(shell_exec($cmd) ?? '');
     if ($output === 'NOT_FOUND_404') {
         echo "  [PASS] Simulated environment = 'production' blocks testing mode and triggers 404 handler\n";
