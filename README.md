@@ -77,19 +77,30 @@ shopwise-platform/
 │   ├── demo_orders.sql     # Development-only realistic demo orders & transactions
 │   └── demo_orders_remove.sql # Cleanup script to remove demo orders without touching seed data
 ├── cron/
-│   ├── expire_orders.php   # Scheduled order expiry (Placeholder until Phase 5)
+│   ├── expire_orders.php   # Scheduled order expiry (processes pending orders past expiry, verifies Daraja STK queries, restores stock atomically)
+│   ├── purge_carts.php     # Scheduled purge for abandoned carts (>30 days) and expired rate limit files
 │   └── send_queued_emails.php # Scheduled email dispatcher
 ├── docs/
 │   ├── TESTING_RULES.md    # Testing constitution, data integrity rules & audit log policies
-│   └── PRE_DEPLOY_CLEANUP.md # Pre-flight deployment audit checklist
+│   ├── PRE_DEPLOY_CLEANUP.md # Pre-flight deployment audit checklist
+│   ├── ENGINEERING_AUDIT.md # Comprehensive repository and architectural audit report
+│   ├── PHP_MODERNIZATION.md # PHP 8.5 / 8.4 runtime compatibility and modernization assessment
+│   ├── SECURITY_AUDIT.md   # Application security analysis and hardening documentation
+│   ├── TEST_RESULTS.md     # Full acceptance test suite execution logs and verification evidence
+│   └── DEPLOYMENT_COMPATIBILITY.md # Truehost cPanel shared hosting compatibility matrix
 ├── scripts/
 │   ├── run_all_tests.sh    # Master test suite runner (linting + all acceptance suites)
 │   ├── acceptance_2afix.sh # Phase 2A acceptance test runner
 │   ├── acceptance_2b.sh    # Phase 2B acceptance test runner
 │   ├── acceptance_2c1.sh   # Phase 2C-1 acceptance test runner
 │   ├── acceptance_2c2.sh   # Phase 2C-2 acceptance test runner
+│   ├── acceptance_3a.sh    # Phase 3A acceptance test runner (Storefront & Catalog)
+│   ├── acceptance_3b.sh    # Phase 3B acceptance test runner (Static Pages, SEO & Reactive Settings)
+│   ├── acceptance_4.sh     # Phase 4 acceptance test runner (Customer Accounts, Auth & Reviews)
+│   ├── acceptance_5.sh     # Phase 5 acceptance test runner (Checkout & M-Pesa Integration)
 │   ├── check_stock_parity.py # Live stock ledger invariant parity verifier
-│   └── create_admin.php    # Interactive CLI administrator account provisioning
+│   ├── create_admin.php    # Interactive CLI administrator account provisioning
+│   └── reset_test_db.sh    # Re-initializes disposable shopwise_test database
 ├── vendor/                 # Vendored third-party dependencies:
 │   └── PHPMailer/          # PHPMailer 6.9+ for authenticated SMTP email delivery
 ├── .gitignore              # Repository exclusions (credentials, logs, uploads, tmp)
@@ -103,9 +114,9 @@ shopwise-platform/
 ## Local Development Setup (XAMPP / LAMP)
 
 ### 1. Prerequisites
-- **PHP:** 8.1 or higher (PHP 8.2+ recommended) with `pdo_mysql`, `gd`, `fileinfo`, `mbstring`, `json` extensions enabled.
+- **PHP:** PHP 8.5.x for modern local development; PHP 8.4.x as Truehost cPanel shared hosting compatibility baseline (PHP 8.2+ supported). Extensions required: `pdo_mysql`, `gd`, `fileinfo`, `mbstring`, `json`, `curl`, `openssl`.
 - **Database:** MariaDB 10.4+ or MySQL 8.0+.
-- **Web Server:** Apache with `mod_rewrite` and `mod_headers` enabled.
+- **Web Server:** Apache 2.4+ with `mod_rewrite` and `mod_headers` enabled.
 
 ### 2. Database Installation
 Create the database and import schema followed by seed data:
