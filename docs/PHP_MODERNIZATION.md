@@ -76,7 +76,7 @@ Test scripts were upgraded to allow testing under both runtimes via `PHP_CMD`:
 
 | Host PHP Version | Status | Recommended Settings |
 | :--- | :--- | :--- |
-| **PHP 8.4 (Target)** | **Full Support** | `max_execution_time = 60`, `memory_limit = 256M`, `upload_max_filesize = 10M`, `post_max_size = 12M` |
+| **PHP 8.4 (Target)** | **Supported (Inferred)** | Target production hosting. Verified via code and deprecation analysis; local binary not installed on test host. Staging verification recommended. |
 | **PHP 8.3** | **Full Support** | Compatible with all existing features. |
-| **PHP 8.2** | **Full Support** | Verified locally via XAMPP. |
-| **PHP 8.5** | **Full Support** | Verified locally via Ubuntu PHP 8.5 CLI. |
+| **PHP 8.2** | **Full Support (Verified)** | Verified locally via XAMPP CLI and Apache mod_php (802/802 tests pass). |
+| **PHP 8.5** | **Full Support (Verified)** | Verified locally via Ubuntu PHP 8.5 CLI (802/802 tests pass). |
