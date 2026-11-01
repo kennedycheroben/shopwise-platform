@@ -509,7 +509,7 @@ final class OrderService
      */
     public static function markAsPaid(int $orderId, string $mpesaReceipt, string $note, int $actorId, ?string $ip = null): void
     {
-        Permissions::require('orders.refund'); // Admin only
+        Permissions::require('orders.mark_as_paid', $actorId);
 
         $mpesaReceipt = strtoupper(trim($mpesaReceipt));
         if (!preg_match('/^[A-Z0-9]{10}$/', $mpesaReceipt)) {

@@ -1886,6 +1886,28 @@ if (defined('SHOPWISE_TESTING_MODE') && SHOPWISE_TESTING_MODE === true) {
         CartService::clearRateLimits();
         send_json_response(['success' => true, 'message' => 'Rate limits cleared.']);
     });
+
+    $router->get('/test/security-context-entry', function () {
+        try {
+            \App\Services\SecurityContext::runAsSystem(function () {
+                return true;
+            }, \App\Services\SecurityContext::JOB_ORDER_EXPIRATION);
+            send_json_response(['allowed' => true]);
+        } catch (\DomainException $e) {
+            send_json_response(['allowed' => false, 'error' => $e->getMessage()], 403);
+        }
+    });
+
+    $router->post('/test/security-context-entry', function () {
+        try {
+            \App\Services\SecurityContext::runAsSystem(function () {
+                return true;
+            }, \App\Services\SecurityContext::JOB_ORDER_EXPIRATION);
+            send_json_response(['allowed' => true]);
+        } catch (\DomainException $e) {
+            send_json_response(['allowed' => false, 'error' => $e->getMessage()], 403);
+        }
+    });
 }
 
 // Dispatch the incoming request

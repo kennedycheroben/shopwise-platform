@@ -35,74 +35,77 @@ require dirname(__DIR__) . '/app/bootstrap.php';
 use App\Database\Database;
 use App\Services\OrderService;
 use App\Services\MpesaService;
+use App\Services\SecurityContext;
 
 $pdo = Database::getInstance();
 $batchLimit = 100;
 
-$stmt = $pdo->prepare("
-    SELECT id, order_number, total, expires_at
-    FROM orders
-    WHERE status = 'pending_payment' AND expires_at <= NOW()
-    ORDER BY expires_at ASC
-    LIMIT :limit
-");
-$stmt->bindValue(':limit', $batchLimit, PDO::PARAM_INT);
-$stmt->execute();
-$orders = $stmt->fetchAll(PDO::FETCH_ASSOC);
+SecurityContext::runAsSystem(function () use ($pdo, $batchLimit) {
+    $stmt = $pdo->prepare("
+        SELECT id, order_number, total, expires_at
+        FROM orders
+        WHERE status = 'pending_payment' AND expires_at <= NOW()
+        ORDER BY expires_at ASC
+        LIMIT :limit
+    ");
+    $stmt->bindValue(':limit', $batchLimit, PDO::PARAM_INT);
+    $stmt->execute();
+    $orders = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-$totalOrders = count($orders);
-$expiredCount = 0;
-$recoveredPaidCount = 0;
-$errorCount = 0;
+    $totalOrders = count($orders);
+    $expiredCount = 0;
+    $recoveredPaidCount = 0;
+    $errorCount = 0;
 
-foreach ($orders as $order) {
-    $orderId = (int)$order['id'];
-    $orderNum = (string)$order['order_number'];
+    foreach ($orders as $order) {
+        $orderId = (int)$order['id'];
+        $orderNum = (string)$order['order_number'];
 
-    try {
-        // 1. Check if there is an active/pending STK Push attempt
-        $pStmt = $pdo->prepare("
-            SELECT * FROM payments 
-            WHERE order_id = :oid AND status IN ('pending', 'pending_verification', 'initiated')
-            ORDER BY id DESC LIMIT 1
-        ");
-        $pStmt->execute([':oid' => $orderId]);
-        $pendingPayment = $pStmt->fetch(PDO::FETCH_ASSOC);
+        try {
+            // 1. Check if there is an active/pending STK Push attempt
+            $pStmt = $pdo->prepare("
+                SELECT * FROM payments 
+                WHERE order_id = :oid AND status IN ('pending', 'pending_verification', 'initiated')
+                ORDER BY id DESC LIMIT 1
+            ");
+            $pStmt->execute([':oid' => $orderId]);
+            $pendingPayment = $pStmt->fetch(PDO::FETCH_ASSOC);
 
-        $paymentVerified = false;
+            $paymentVerified = false;
 
-        if ($pendingPayment && !empty($pendingPayment['checkout_request_id'])) {
-            $queryResult = MpesaService::queryStkPush($pendingPayment['checkout_request_id']);
-            if ($queryResult['success']) {
-                $raw = $queryResult['raw'] ?? [];
-                $receipt = $raw['MpesaReceiptNumber'] ?? ('QRC' . substr($pendingPayment['checkout_request_id'], -7));
-                OrderService::transitionToPaid($orderId, $receipt, json_encode($raw));
-                $paymentVerified = true;
-                $recoveredPaidCount++;
+            if ($pendingPayment && !empty($pendingPayment['checkout_request_id'])) {
+                $queryResult = MpesaService::queryStkPush($pendingPayment['checkout_request_id']);
+                if ($queryResult['success']) {
+                    $raw = $queryResult['raw'] ?? [];
+                    $receipt = $raw['MpesaReceiptNumber'] ?? ('QRC' . substr($pendingPayment['checkout_request_id'], -7));
+                    OrderService::transitionToPaid($orderId, $receipt, json_encode($raw));
+                    $paymentVerified = true;
+                    $recoveredPaidCount++;
+                }
             }
-        }
 
-        // 2. If not verified as paid, expire the order
-        if (!$paymentVerified) {
-            $expired = OrderService::expire($orderId);
-            if ($expired) {
-                $expiredCount++;
+            // 2. If not verified as paid, expire the order
+            if (!$paymentVerified) {
+                $expired = OrderService::expire($orderId);
+                if ($expired) {
+                    $expiredCount++;
+                }
             }
+        } catch (\Throwable $e) {
+            $errorCount++;
+            fwrite(STDERR, "[" . date('Y-m-d H:i:s') . "] ERROR processing Order #{$orderNum}: " . $e->getMessage() . "\n");
         }
-    } catch (\Throwable $e) {
-        $errorCount++;
-        fwrite(STDERR, "[" . date('Y-m-d H:i:s') . "] ERROR processing Order #{$orderNum}: " . $e->getMessage() . "\n");
     }
-}
 
-echo sprintf(
-    "[%s] Order Expiration Worker: Processed: %d, Expired: %d, Recovered Paid: %d, Errors: %d\n",
-    date('Y-m-d H:i:s'),
-    $totalOrders,
-    $expiredCount,
-    $recoveredPaidCount,
-    $errorCount
-);
+    echo sprintf(
+        "[%s] Order Expiration Worker: Processed: %d, Expired: %d, Recovered Paid: %d, Errors: %d\n",
+        date('Y-m-d H:i:s'),
+        $totalOrders,
+        $expiredCount,
+        $recoveredPaidCount,
+        $errorCount
+    );
+}, 'cron_order_expiration');
 
 flock($lockFp, LOCK_UN);
 fclose($lockFp);

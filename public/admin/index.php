@@ -3,6 +3,9 @@ require dirname(__DIR__, 2) . '/app/bootstrap.php';
 require dirname(__DIR__, 2) . '/app/views/admin/guard.php';
 
 use App\Services\DashboardService;
+use App\Services\Permissions;
+
+Permissions::require('dashboard.view');
 
 $dashboard = DashboardService::data();
 

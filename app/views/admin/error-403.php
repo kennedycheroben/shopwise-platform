@@ -64,9 +64,13 @@
           </div>
         </div>
 
+        <?php
+        $returnUrl = \App\Services\Permissions::can('dashboard.view') ? url('admin/') : url('admin/orders/');
+        $returnLabel = \App\Services\Permissions::can('dashboard.view') ? 'Back to Dashboard' : 'Back to Orders Workspace';
+        ?>
         <div class="error-actions">
-          <a href="<?= e(url('admin/')) ?>" class="btn btn-primary btn-lg">
-            <i class="bi bi-house-door me-2"></i>Back to Dashboard
+          <a href="<?= e($returnUrl) ?>" class="btn btn-primary btn-lg">
+            <i class="bi bi-house-door me-2"></i><?= e($returnLabel) ?>
           </a>
           <a href="<?= e(url('admin/login.php')) ?>" class="btn btn-outline-secondary btn-lg">
             <i class="bi bi-box-arrow-in-right me-2"></i>Sign In with Another Account

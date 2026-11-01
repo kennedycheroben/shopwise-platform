@@ -8,7 +8,7 @@ use App\Services\AdminAuthService;
 
 Permissions::require('reviews.moderate');
 $currentUser = AdminAuthService::user();
-$isAdmin = ($currentUser['role'] === 'admin');
+$canDelete = Permissions::can('reviews.delete');
 
 // Validate tampered ID on GET request
 if (isset($_GET['id'])) {
@@ -46,10 +46,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ReviewService::moderate($id, $status, $actorId, $ip);
             flash_set('success', "Review marked as '{$status}' successfully.");
         } elseif ($action === 'delete') {
-            if (!$isAdmin) {
-                http_response_code(403);
-                exit('Forbidden: Only administrators can delete reviews.');
-            }
+            Permissions::require('reviews.delete');
             $id = (int)($_POST['id'] ?? 0);
             ReviewService::delete($id, $actorId, $ip);
             flash_set('success', 'Review deleted permanently.');
@@ -244,7 +241,7 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
                                                 </button>
                                             </form>
                                         <?php endif; ?>
-                                        <?php if ($isAdmin): ?>
+                                        <?php if ($canDelete): ?>
                                             <form method="POST" action="<?= e(url('admin/reviews/')) ?>" class="d-inline" onsubmit="return confirm('Permanently delete this review?');">
                                                 <?= csrf_field() ?>
                                                 <input type="hidden" name="action" value="delete">

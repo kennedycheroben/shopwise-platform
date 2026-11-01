@@ -69,7 +69,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // --- Action: Delete Variant ---
         elseif ($action === 'variant_delete') {
-            Permissions::require('products.edit');
+            Permissions::require('products.delete');
             $variantId = (int)($_POST['variant_id'] ?? 0);
             VariantService::delete($variantId, $actorId, $ip, $productId);
             flash_set('success', 'Variant deleted successfully.');
@@ -164,7 +164,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         // --- Action: Delete Image ---
         elseif ($action === 'delete_image') {
-            Permissions::require('products.edit');
+            Permissions::require('products.delete');
             $imageId = (int)($_POST['image_id'] ?? 0);
             ProductImageService::delete($productId, $imageId, $actorId, $ip);
             flash_set('success', 'Image deleted successfully.');
@@ -531,6 +531,7 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
                                                             title="Edit Variant">
                                                         <i class="bi bi-pencil"></i>
                                                     </button>
+                                                    <?php if (\App\Services\Permissions::can('products.delete')): ?>
                                                     <button type="button" 
                                                             class="btn btn-outline-danger btn-sm delete-variant-btn"
                                                             data-id="<?= (int)$v['id'] ?>"
@@ -538,6 +539,7 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
                                                             title="Delete Variant">
                                                         <i class="bi bi-trash"></i>
                                                     </button>
+                                                    <?php endif; ?>
                                                 </div>
                                             </td>
                                         </tr>
@@ -661,6 +663,7 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
                                                     <i class="bi bi-pencil"></i>
                                                 </button>
 
+                                                <?php if (\App\Services\Permissions::can('products.delete')): ?>
                                                 <form action="<?= e(url('admin/products/edit.php?id=' . $productId)) ?>" method="POST" class="d-inline" onsubmit="return confirm('Delete this image?');">
                                                     <?= csrf_field() ?>
                                                     <input type="hidden" name="action" value="delete_image">
@@ -670,6 +673,7 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
                                                         <i class="bi bi-trash"></i>
                                                     </button>
                                                 </form>
+                                                <?php endif; ?>
                                             </div>
                                         </div>
                                     </div>

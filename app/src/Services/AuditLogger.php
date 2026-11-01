@@ -25,6 +25,11 @@ final class AuditLogger {
     public static function write(?int $actorId, string $action, string $type, ?int $entityId, array $details, string $ip): void {
         try {
             $safeDetails = self::redact($details);
+            if (SecurityContext::isSystem()) {
+                $safeDetails['_system_execution'] = true;
+                $safeDetails['_system_job'] = SecurityContext::getJobName();
+                $safeDetails['_system_reason'] = SecurityContext::getJobName();
+            }
             Database::getInstance()->prepare('INSERT INTO audit_log (actor_user_id,action,entity_type,entity_id,details,ip) VALUES (:actor,:action,:type,:entity,:details,:ip)')->execute([
                 ':actor'   => ($actorId && $actorId > 0) ? $actorId : null,
                 ':action'  => $action,

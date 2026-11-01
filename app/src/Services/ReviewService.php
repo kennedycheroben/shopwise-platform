@@ -111,12 +111,14 @@ final class ReviewService
      */
     public static function delete(int $id, int $actorId, string $ip): void
     {
+        Permissions::require('reviews.delete', $actorId);
+
         $pdo = Database::getInstance();
         if ($actorId > 0) {
             $actStmt = $pdo->prepare("SELECT role FROM users WHERE id = :id LIMIT 1");
             $actStmt->execute([':id' => $actorId]);
             $actorRole = $actStmt->fetchColumn();
-            if ($actorRole !== 'admin') {
+            if (!in_array($actorRole, ['admin', 'super_admin'], true)) {
                 throw new DomainException("Only administrators can delete product reviews.");
             }
         }

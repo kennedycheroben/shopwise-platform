@@ -47,6 +47,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
             OrderService::cancel($orderId, $actorId, $note, $expectedFrom ?: null, false, $ip);
             flash_set('success', "Order has been cancelled and stock has been restored.");
         } elseif ($action === 'mark_as_paid') {
+            Permissions::require('orders.mark_as_paid');
             $receipt = trim($_POST['mpesa_receipt'] ?? '');
             $note = trim($_POST['note'] ?? '');
             OrderService::markAsPaid($orderId, $receipt, $note, $actorId, $ip);
@@ -110,6 +111,7 @@ $activeGroup = 'sales';
 $isAdmin = ($currentUser['role'] ?? '') === 'admin';
 $canManage = Permissions::can('orders.manage');
 $canRefund = Permissions::can('orders.refund');
+$canMarkPaid = Permissions::can('orders.mark_as_paid');
 
 require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
 ?>
@@ -243,7 +245,7 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
                 <!-- Action Panel Buttons -->
                 <div class="d-flex flex-wrap gap-2">
                     <?php if ($order['status'] === 'pending_payment'): ?>
-                        <?php if ($isAdmin): ?>
+                        <?php if ($canMarkPaid): ?>
                             <button type="button" class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#markPaidModal">
                                 <i class="bi bi-cash-stack me-1"></i> Mark as Paid
                             </button>
@@ -715,7 +717,7 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
 </div>
 
 <!-- Mark as Paid Modal (Admin Only) -->
-<?php if ($isAdmin): ?>
+<?php if ($canMarkPaid): ?>
 <div class="modal fade" id="markPaidModal" tabindex="-1" aria-labelledby="markPaidModalLabel" aria-hidden="true">
     <div class="modal-dialog">
         <form action="<?= e(url('admin/orders/detail.php')) ?>" method="POST" class="modal-content">

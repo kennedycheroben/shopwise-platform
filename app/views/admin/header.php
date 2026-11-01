@@ -15,11 +15,12 @@ $notifItems = $notifData['items'];
 $msgData = \App\Services\NotificationService::getHeaderMessages($userRole);
 $msgCount = $msgData['count'];
 $msgItems = $msgData['items'];
+$homeUrl = \App\Services\Permissions::can('dashboard.view', $userRole) ? url('admin/') : url('admin/orders/');
 ?>
 <header class="header">
     <!-- Header Left -->
     <div class="header-left">
-        <a href="<?= e(url('admin/')) ?>" class="header-logo">
+        <a href="<?= e($homeUrl) ?>" class="header-logo">
             <img src="<?= e(asset('admin/assets/img/logo.webp')) ?>" alt="ShopWise Kenya">
             <span>ShopWise Kenya</span>
         </a>
@@ -129,7 +130,11 @@ $msgItems = $msgData['items'];
                         <?php endif; ?>
                     </div>
                     <div class="notification-footer p-2 text-center border-top">
-                        <a href="<?= e(url('admin/')) ?>" class="small text-decoration-none fw-medium">View Operations Dashboard</a>
+                        <?php if (\App\Services\Permissions::can('dashboard.view', $userRole)): ?>
+                            <a href="<?= e(url('admin/')) ?>" class="small text-decoration-none fw-medium">View Executive Dashboard</a>
+                        <?php else: ?>
+                            <a href="<?= e(url('admin/orders/')) ?>" class="small text-decoration-none fw-medium">View Orders Workspace</a>
+                        <?php endif; ?>
                     </div>
                 </div>
             </div>

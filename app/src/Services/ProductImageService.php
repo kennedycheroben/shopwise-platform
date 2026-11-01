@@ -244,6 +244,8 @@ class ProductImageService
      */
     public static function delete(int $productId, int $imageId, int $actorId, string $ip): bool
     {
+        Permissions::require('products.delete', $actorId);
+
         $image = self::find($imageId);
         if (!$image || (int)$image['product_id'] !== $productId) {
             throw new DomainException("Image does not belong to this product.");

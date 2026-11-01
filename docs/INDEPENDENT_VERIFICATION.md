@@ -208,3 +208,4 @@ Detailed audit of `app/src/Services/MpesaService.php:778-1071` and `public/index
 2. All 802 tests pass across both PHP 8.2 and PHP 8.5 runtimes with zero drift in the protected database `shopwise_db`.
 3. No breaking architectural changes or unsolicited frameworks were introduced.
 4. The defects documented in Section 3 (`handleLateSuccessAfterExpiry` multi-payment update and `profile.php` password check) are pre-existing issues in master, not regressions introduced by this branch. They should be addressed in a follow-up patch prior to live production deployment.
+

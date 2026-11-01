@@ -13,13 +13,16 @@ if (php_sapi_name() !== 'cli') {
 require_once dirname(__DIR__) . '/app/bootstrap.php';
 
 use App\Services\MailerService;
+use App\Services\SecurityContext;
 
 echo "[" . date('Y-m-d H:i:s') . "] Starting email queue dispatcher...\n";
 
 try {
-    $mailer = new MailerService();
-    $sent = $mailer->processQueue(25);
-    echo "[" . date('Y-m-d H:i:s') . "] Successfully processed {$sent} queued email(s).\n";
+    SecurityContext::runAsSystem(function () {
+        $mailer = new MailerService();
+        $sent = $mailer->processQueue(25);
+        echo "[" . date('Y-m-d H:i:s') . "] Successfully processed {$sent} queued email(s).\n";
+    }, 'cron_email_dispatcher');
 } catch (Throwable $e) {
     echo "[" . date('Y-m-d H:i:s') . "] Error dispatching email queue: " . $e->getMessage() . "\n";
     exit(1);

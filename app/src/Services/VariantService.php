@@ -319,6 +319,8 @@ class VariantService
      */
     public static function delete(int $variantId, int $actorId, string $ip, ?int $expectedProductId = null): bool
     {
+        Permissions::require('products.delete', $actorId);
+
         $variant = self::find($variantId);
         if (!$variant) {
             throw new DomainException("Variant not found.");

@@ -61,7 +61,7 @@ final class AdminAuthService
         $passwordMatches = password_verify($password, $hashToVerify);
 
         $ok = $user
-            && in_array($user['role'], ['admin', 'staff'], true)
+            && Permissions::isAdminRole($user['role'])
             && $user['status'] === 'active'
             && $passwordMatches;
 
@@ -115,7 +115,7 @@ final class AdminAuthService
     public static function requireAdmin(): array
     {
         $user = self::requireLogin();
-        if ($user['role'] !== 'admin') {
+        if (!in_array($user['role'], ['admin', 'super_admin'], true)) {
             http_response_code(403);
             require dirname(__DIR__, 2) . '/views/admin/error-403.php';
             exit;
@@ -124,7 +124,7 @@ final class AdminAuthService
     }
 
     /**
-     * Capability check
+     * Capability check (delegates to centralized Permissions engine)
      */
     public static function can(string $capability): bool
     {
@@ -132,9 +132,17 @@ final class AdminAuthService
         if (!$u) {
             return false;
         }
-        if ($u['role'] === 'admin') {
-            return true;
-        }
-        return in_array($capability, ['dashboard', 'products', 'inventory', 'orders', 'customers', 'reviews', 'messages'], true);
+        $map = [
+            'dashboard' => 'dashboard.view',
+            'products'  => 'products.view',
+            'inventory' => 'inventory.adjust',
+            'orders'    => 'orders.view',
+            'customers' => 'customers.view',
+            'reviews'   => 'reviews.moderate',
+            'messages'  => 'messages.manage',
+        ];
+        $ability = $map[$capability] ?? $capability;
+        $roles = Permissions::rolesForSessionUser();
+        return Permissions::can($ability, $roles);
     }
 }

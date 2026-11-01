@@ -4,6 +4,7 @@ $adminUser = $adminUser ?? \App\Services\AdminAuthService::user() ?? [
     'first_name' => 'Admin',
     'last_name' => 'User',
 ];
+$homeUrl = \App\Services\Permissions::can('dashboard.view') ? url('admin/') : url('admin/orders/');
 ?>
 <!-- Sidebar -->
 <aside class="sidebar">
@@ -11,7 +12,7 @@ $adminUser = $adminUser ?? \App\Services\AdminAuthService::user() ?? [
     <!-- Icon Strip -->
     <div class="sidebar-strip">
         <div class="sidebar-strip-logo">
-            <a href="<?= e(url('admin/')) ?>">
+            <a href="<?= e($homeUrl) ?>">
                 <img src="<?= e(asset('admin/assets/img/logo.webp')) ?>" alt="ShopWise Kenya">
             </a>
         </div>
@@ -43,7 +44,9 @@ $adminUser = $adminUser ?? \App\Services\AdminAuthService::user() ?? [
                 <button class="sidebar-panel-close" type="button"><i class="bi bi-x-lg"></i></button>
             </div>
             <ul class="panel-nav">
+                <?php if (\App\Services\Permissions::can('dashboard.view')): ?>
                 <li><a class="panel-link<?= ($pageTitle ?? '') === 'Dashboard' ? ' active' : '' ?>" href="<?= e(url('admin/')) ?>">Dashboard</a></li>
+                <?php endif; ?>
 
                 <?php if (\App\Services\Permissions::can('products.view') || \App\Services\Permissions::can('categories.manage') || \App\Services\Permissions::can('inventory.adjust')): ?>
                 <li class="panel-nav-group<?= in_array(($activeGroup ?? ''), ['catalog', 'products', 'categories', 'inventory'], true) ? ' open' : '' ?>">
