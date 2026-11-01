@@ -15,7 +15,10 @@ $notifItems = $notifData['items'];
 $msgData = \App\Services\NotificationService::getHeaderMessages($userRole);
 $msgCount = $msgData['count'];
 $msgItems = $msgData['items'];
-$homeUrl = \App\Services\Permissions::can('dashboard.view', $userRole) ? url('admin/') : url('admin/orders/');
+$homeUrl = \App\Services\Permissions::can('dashboard.view') ? url('admin/') : url('admin/orders/');
+$displayRole = !empty($adminUser['roles']) 
+    ? ucwords(str_replace('_', ' ', $adminUser['roles'][0])) 
+    : ucfirst($adminUser['role'] ?? 'Staff');
 ?>
 <header class="header">
     <!-- Header Left -->
@@ -52,7 +55,7 @@ $homeUrl = \App\Services\Permissions::can('dashboard.view', $userRole) ? url('ad
             <!-- Header Divider -->
             <div class="header-divider"></div>
 
-            <?php if (\App\Services\Permissions::can('messages.manage', $userRole)): ?>
+            <?php if (\App\Services\Permissions::can('messages.manage')): ?>
             <!-- Messages Dropdown -->
             <div class="header-action dropdown messages-dropdown">
                 <button class="dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" title="Messages" type="button">
@@ -130,7 +133,7 @@ $homeUrl = \App\Services\Permissions::can('dashboard.view', $userRole) ? url('ad
                         <?php endif; ?>
                     </div>
                     <div class="notification-footer p-2 text-center border-top">
-                        <?php if (\App\Services\Permissions::can('dashboard.view', $userRole)): ?>
+                        <?php if (\App\Services\Permissions::can('dashboard.view')): ?>
                             <a href="<?= e(url('admin/')) ?>" class="small text-decoration-none fw-medium">View Executive Dashboard</a>
                         <?php else: ?>
                             <a href="<?= e(url('admin/orders/')) ?>" class="small text-decoration-none fw-medium">View Orders Workspace</a>
@@ -148,7 +151,7 @@ $homeUrl = \App\Services\Permissions::can('dashboard.view', $userRole) ? url('ad
                     <img src="<?= e(asset('admin/assets/img/profile-img.webp')) ?>" alt="User" class="avatar">
                     <div class="user-info">
                         <span class="user-name"><?= e(trim(($adminUser['first_name'] ?? 'Admin') . ' ' . ($adminUser['last_name'] ?? ''))) ?></span>
-                        <span class="user-role"><?= e(ucfirst($adminUser['role'] ?? 'Staff')) ?></span>
+                        <span class="user-role"><?= e($displayRole) ?></span>
                     </div>
                     <i class="bi bi-chevron-down user-arrow"></i>
                 </button>

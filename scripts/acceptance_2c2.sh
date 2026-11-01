@@ -281,6 +281,15 @@ echo "  Provisioned Admin #$ADMIN_ID ($ADMIN_EMAIL)"
 echo "  Provisioned Staff #$STAFF_ID ($STAFF_EMAIL)"
 echo "  Provisioned Cust #$CUST_ID ($CUST_EMAIL)"
 
+# If user_roles schema is present, sync roles
+"$PHP_CMD" -r "
+require 'app/bootstrap.php';
+\$pdo = App\Database\Database::getInstance();
+if ((bool)\$pdo->query(\"SHOW TABLES LIKE 'user_roles'\")->fetchColumn()) {
+    \$pdo->exec(\"INSERT IGNORE INTO user_roles (user_id, role, assigned_at) VALUES ($ADMIN_ID, 'admin', NOW()), ($STAFF_ID, 'staff', NOW())\");
+}
+"
+
 # Helper function to perform login via cURL and obtain session cookies
 login_user() {
     local email="$1"

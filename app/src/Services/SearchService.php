@@ -13,7 +13,7 @@ final class SearchService
      * Perform permission-aware multi-entity search.
      * Returns results grouped by entity type: ['orders' => [...], 'products' => [...], 'customers' => [...]]
      */
-    public static function search(string $query, ?string $userRole = null): array
+    public static function search(string $query, array|string|null $userRole = null): array
     {
         $q = trim($query);
         if (mb_strlen($q) < self::MIN_QUERY_LENGTH) {

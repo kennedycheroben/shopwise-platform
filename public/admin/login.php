@@ -4,7 +4,8 @@ require dirname(__DIR__, 2) . '/app/bootstrap.php';
 use App\Services\AdminAuthService;
 
 if ($user = AdminAuthService::user()) {
-    $dest = \App\Services\Permissions::can('dashboard.view', $user['role']) ? 'admin/' : 'admin/orders/';
+    $roles = \App\Services\Permissions::rolesForSessionUser();
+    $dest = \App\Services\Permissions::can('dashboard.view', $roles) ? 'admin/' : 'admin/orders/';
     redirect($dest);
 }
 
@@ -26,7 +27,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($ok) {
             if ($return === '/admin/' || $return === '/admin/index.php') {
                 $loggedIn = AdminAuthService::user();
-                if ($loggedIn && !\App\Services\Permissions::can('dashboard.view', $loggedIn['role'])) {
+                $loggedInRoles = \App\Services\Permissions::rolesForSessionUser();
+                if ($loggedIn && !\App\Services\Permissions::can('dashboard.view', $loggedInRoles)) {
                     $return = '/admin/orders/';
                 }
             }

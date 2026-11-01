@@ -9,7 +9,7 @@ final class NotificationService
     /**
      * Compute real-time admin notification counts based on user role permissions.
      */
-    public static function getNotifications(?string $userRole = null): array
+    public static function getNotifications(array|string|null $userRole = null): array
     {
         $pdo = Database::getInstance();
         $items = [];
@@ -118,7 +118,7 @@ final class NotificationService
     /**
      * Get recent contact messages for header messages dropdown.
      */
-    public static function getHeaderMessages(?string $userRole = null): array
+    public static function getHeaderMessages(array|string|null $userRole = null): array
     {
         if (!Permissions::can('messages.manage', $userRole)) {
             return ['count' => 0, 'items' => []];

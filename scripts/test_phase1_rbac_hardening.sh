@@ -96,6 +96,11 @@ VALUES
 ('staff', 'Staff', 'Operator', '$STAFF_EMAIL', '$PASSWORD_HASH', 'active', NOW(), NOW()),
 ('customer', 'Customer', 'Shopper', '$CUST_EMAIL', '$PASSWORD_HASH', 'active', NOW(), NOW());"
 
+# Forward-compatibility: populate user_roles junction table if present in test database
+if [ "$(run_sql "SHOW TABLES LIKE 'user_roles';")" = "user_roles" ]; then
+    run_sql "INSERT IGNORE INTO user_roles (user_id, role, assigned_at) SELECT id, role, NOW() FROM users WHERE email IN ('$ADMIN_EMAIL', '$STAFF_EMAIL');"
+fi
+
 # Authenticate users and store session cookies
 login_user() {
     local email="$1"

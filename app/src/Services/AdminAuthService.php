@@ -60,8 +60,20 @@ final class AdminAuthService
         $hashToVerify = ($user && !empty($user['password_hash'])) ? $user['password_hash'] : $dummyHash;
         $passwordMatches = password_verify($password, $hashToVerify);
 
+        $assignedRoles = [];
+        $hasAdminRole = false;
+        if ($user) {
+            $assignedRoles = Permissions::rolesForUser((int)$user['id'], true);
+            foreach ($assignedRoles as $r) {
+                if (Permissions::isAdminRole($r)) {
+                    $hasAdminRole = true;
+                    break;
+                }
+            }
+        }
+
         $ok = $user
-            && Permissions::isAdminRole($user['role'])
+            && $hasAdminRole
             && $user['status'] === 'active'
             && $passwordMatches;
 
@@ -78,6 +90,7 @@ final class AdminAuthService
 
         session_regenerate_id(true);
         unset($user['password_hash']);
+        $user['roles'] = $assignedRoles;
         $user['auth_time'] = time();
         $_SESSION['admin_user'] = $user;
 
@@ -110,12 +123,13 @@ final class AdminAuthService
     }
 
     /**
-     * Require admin-only role
+     * Require admin-only role (super_admin or legacy admin)
      */
     public static function requireAdmin(): array
     {
         $user = self::requireLogin();
-        if (!in_array($user['role'], ['admin', 'super_admin'], true)) {
+        $roles = Permissions::rolesForSessionUser();
+        if (!in_array('admin', $roles, true) && !in_array('super_admin', $roles, true)) {
             http_response_code(403);
             require dirname(__DIR__, 2) . '/views/admin/error-403.php';
             exit;

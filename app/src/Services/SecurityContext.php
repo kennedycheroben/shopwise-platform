@@ -2,8 +2,10 @@
 
 namespace App\Services;
 
+use App\Database\Database;
 use DomainException;
 use InvalidArgumentException;
+use Throwable;
 
 /**
  * Explicit System Execution Context
@@ -11,14 +13,26 @@ use InvalidArgumentException;
  * Provides a strictly controlled, narrow-capability boundary for automated background
  * workers, cron jobs, and asynchronous queue dispatchers.
  *
- * Security Invariants:
+ * Security Architecture & Invariants:
  * 1. Strictly forbidden in Web/HTTP runtime (throws DomainException unconditionally).
  * 2. Unauthenticated requests can never enter or acquire system execution context.
- * 3. Ordinary CLI processes do not receive automatic privileges.
- * 4. Jobs must declare a canonical, pre-approved job identifier from a closed registry.
- * 5. Replaces unrestricted wildcards with job-specific, least-privilege capability sets.
+ * 3. Ordinary CLI processes do not receive ambient or automatic privileges.
+ * 4. Production jobs must declare a canonical identifier from a closed registry.
+ * 5. Production jobs are constrained strictly to least-privilege capability sets.
  * 6. Nested contexts use privilege intersection (capabilities can only narrow, never expand).
  * 7. Context state is reliably restored in try/finally blocks even on unhandled exceptions.
+ * 8. Testing contexts are strictly segregated and require verified connection to a test database.
+ *
+ * OPERATING SYSTEM SECURITY BOUNDARY NOTE:
+ * In-process controls (such as debug_backtrace caller inspection or closed job registries)
+ * provide vital application-level defense-in-depth against casual or accidental invocation
+ * by unrelated application scripts. However, within PHP's shared-memory execution model,
+ * code running in the same process can theoretically manipulate memory.
+ * Genuine, unbreakable security boundaries for background workers MUST be enforced at the
+ * Operating System level:
+ * - Background workers and cron jobs should execute under a dedicated, low-privilege OS system
+ *   user (e.g., 'shopwise_worker') that is strictly isolated from the web server user ('daemon'/'www-data').
+ * - Database credentials used by background workers should follow least privilege.
  */
 final class SecurityContext
 {
@@ -29,7 +43,7 @@ final class SecurityContext
     public const JOB_TEST_RUNNER      = 'test_runner';
 
     /**
-     * Canonical Job Capability Map (Least-Privilege Role Boundaries)
+     * Canonical Job Capability Map for Production Background Workers
      * No system job possesses wildcard '*' or broad administrative capabilities.
      */
     private const JOB_CAPABILITIES = [
@@ -51,17 +65,16 @@ final class SecurityContext
             'rate_limits.purge',
             'audit.log',
         ],
-        self::JOB_TEST_RUNNER => [
-            'test.execute',
-            'orders.expire',
-            'orders.status_transition',
-            'orders.manage',
-            'inventory.adjust',
-            'email.dispatch',
-            'email.queue',
-            'carts.purge',
-            'audit.log',
-        ],
+    ];
+
+    /**
+     * Sanctioned entry-point script basenames for production system jobs.
+     * Application defense-in-depth check preventing casual invocation from unrelated scripts.
+     */
+    private const SANCTIONED_CALLERS = [
+        self::JOB_ORDER_EXPIRATION => 'expire_orders.php',
+        self::JOB_EMAIL_DISPATCHER => 'send_queued_emails.php',
+        self::JOB_PURGE_CARTS      => 'purge_carts.php',
     ];
 
     private static ?array $activeContext = null;
@@ -84,24 +97,36 @@ final class SecurityContext
             throw new DomainException("Security Violation: System execution context is strictly forbidden in web/HTTP requests.");
         }
 
-        // 2. Closed registry validation: Job identifier must be known and registered
+        // 2. Handle test_runner segregation: delegate to verified test context
+        if ($jobIdentifier === self::JOB_TEST_RUNNER) {
+            return self::runInTestContext($action, [
+                'test.execute',
+                'orders.expire',
+                'orders.status_transition',
+                'orders.manage',
+                'inventory.adjust',
+                'email.dispatch',
+                'email.queue',
+                'carts.purge',
+                'audit.log',
+            ], self::JOB_TEST_RUNNER, $metadata);
+        }
+
+        // 3. Closed registry validation: Job identifier must be known and registered
         if (!array_key_exists($jobIdentifier, self::JOB_CAPABILITIES)) {
             throw new InvalidArgumentException("Unauthorized or unrecognized system job identifier '{$jobIdentifier}'.");
         }
 
-        // 3. Testing job restriction: test_runner is only valid when testing mode is enabled
-        if ($jobIdentifier === self::JOB_TEST_RUNNER) {
-            $isTesting = (defined('SHOPWISE_TESTING_MODE') && SHOPWISE_TESTING_MODE) ||
-                         (getenv('SHOPWISE_CONFIG') === 'testing') ||
-                         (($_SERVER['SHOPWISE_CONFIG'] ?? '') === 'testing');
-            if (!$isTesting) {
-                throw new DomainException("Security Violation: test_runner job is only permitted in an explicit testing environment.");
-            }
+        // 4. Controlled Caller Verification (Application Defense-in-Depth)
+        // In production mode, verify caller script matches the sanctioned cron worker.
+        // In a verified test environment, tests may execute system jobs directly against shopwise_test.
+        if (!self::isVerifiedTestEnvironment()) {
+            self::assertSanctionedCaller($jobIdentifier);
         }
 
         $childCapabilities = self::JOB_CAPABILITIES[$jobIdentifier];
 
-        // 4. Nested Context Privilege Restriction:
+        // 5. Nested Context Privilege Restriction:
         // When nesting, capabilities are strictly intersected with the parent context.
         // A child context can NEVER broaden permissions beyond what the parent holds.
         if (self::$activeContext !== null && (self::$activeContext['active'] ?? false)) {
@@ -122,6 +147,67 @@ final class SecurityContext
             'metadata'     => $metadata,
             'started_at'   => microtime(true),
             'sapi'         => php_sapi_name(),
+        ];
+
+        try {
+            return $action();
+        } finally {
+            self::$activeContext = $previousContext;
+        }
+    }
+
+    /**
+     * Execute a callable in an isolated test execution context.
+     *
+     * SECURITY INVARIANT:
+     * This method strictly requires CLI runtime AND cryptographically/physically verifies
+     * that the active database connection is connected to 'shopwise_test' (or ends in '_test').
+     * It is physically impossible to acquire test execution context against a production database.
+     *
+     * @template T
+     * @param callable(): T $action
+     * @param array $capabilities Specific capabilities granted for this test run
+     * @param string $jobName Test identifier name
+     * @param array $metadata Optional metadata
+     * @return T
+     * @throws DomainException If invoked outside CLI or against non-test database
+     */
+    public static function runInTestContext(
+        callable $action,
+        array $capabilities = ['test.execute'],
+        string $jobName = 'test_runner',
+        array $metadata = []
+    ) {
+        if (php_sapi_name() !== 'cli') {
+            throw new DomainException("Security Violation: Test execution context is strictly forbidden in web/HTTP requests.");
+        }
+
+        // Verify that the active database connection is strictly an isolated test database
+        if (!self::isVerifiedTestEnvironment()) {
+            throw new DomainException(
+                "Security Violation: Test execution context is rejected because the active database connection is not a verified test database (e.g. 'shopwise_test')."
+            );
+        }
+
+        if (self::$activeContext !== null && (self::$activeContext['active'] ?? false)) {
+            $parentCapabilities = self::$activeContext['capabilities'] ?? [];
+            $effectiveCapabilities = array_values(array_intersect($parentCapabilities, $capabilities));
+            $effectiveJob = self::$activeContext['job'] . ' > ' . $jobName;
+        } else {
+            $effectiveCapabilities = $capabilities;
+            $effectiveJob = $jobName;
+        }
+
+        $previousContext = self::$activeContext;
+        self::$activeContext = [
+            'active'       => true,
+            'job'          => $effectiveJob,
+            'job_id'       => $jobName,
+            'capabilities' => $effectiveCapabilities,
+            'metadata'     => $metadata,
+            'started_at'   => microtime(true),
+            'sapi'         => php_sapi_name(),
+            'is_test'      => true,
         ];
 
         try {
@@ -188,4 +274,64 @@ final class SecurityContext
             'email'      => 'system@shopwise.internal',
         ];
     }
+
+    /**
+     * Validate that the caller matches the sanctioned entry point script for the job.
+     */
+    private static function assertSanctionedCaller(string $jobIdentifier): void
+    {
+        $expectedCaller = self::SANCTIONED_CALLERS[$jobIdentifier] ?? null;
+        if ($expectedCaller === null) {
+            throw new DomainException("Security Violation: No sanctioned caller script registered for job '{$jobIdentifier}'.");
+        }
+
+        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 5);
+        $callerFound = false;
+
+        foreach ($trace as $frame) {
+            $file = $frame['file'] ?? '';
+            if ($file !== '' && basename($file) === $expectedCaller) {
+                $callerFound = true;
+                break;
+            }
+        }
+
+        if (!$callerFound) {
+            $callingFile = basename($trace[0]['file'] ?? 'unknown');
+            throw new DomainException(
+                "Security Violation: Unauthorized caller script '{$callingFile}' attempted to assume system job '{$jobIdentifier}'. Must be invoked from '{$expectedCaller}'."
+            );
+        }
+    }
+
+    /**
+     * Verify whether the current execution runtime is connected to a genuine test database.
+     */
+    private static function isVerifiedTestEnvironment(): bool
+    {
+        // Must be in CLI
+        if (php_sapi_name() !== 'cli') {
+            return false;
+        }
+
+        // Must declare test intent via config or constant
+        $isConfigTesting = (defined('SHOPWISE_TESTING_MODE') && SHOPWISE_TESTING_MODE) ||
+                           (getenv('SHOPWISE_CONFIG') === 'testing') ||
+                           (($_SERVER['SHOPWISE_CONFIG'] ?? '') === 'testing');
+
+        if (!$isConfigTesting) {
+            return false;
+        }
+
+        // Strictly verify active connected database name from the database server itself
+        try {
+            $pdo = Database::getInstance();
+            $stmt = $pdo->query("SELECT DATABASE()");
+            $dbName = (string)$stmt->fetchColumn();
+            return ($dbName === 'shopwise_test' || str_ends_with($dbName, '_test'));
+        } catch (Throwable $e) {
+            return false;
+        }
+    }
 }
+

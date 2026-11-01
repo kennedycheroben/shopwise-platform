@@ -187,15 +187,24 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
                                     </div>
                                 </td>
                                 <td>
-                                    <?php if ($s['role'] === 'admin'): ?>
-                                        <span class="badge bg-primary text-uppercase px-2 py-1">
-                                            <i class="bi bi-shield-lock me-1"></i> Administrator
+                                    <?php foreach (($s['roles'] ?? [$s['role']]) as $r): ?>
+                                        <?php
+                                            $badgeClass = match($r) {
+                                                'super_admin', 'admin' => 'bg-primary',
+                                                'finance_manager'      => 'bg-success',
+                                                'orders_manager'       => 'bg-info text-dark',
+                                                'inventory_manager'    => 'bg-warning text-dark',
+                                                'catalog_manager'      => 'bg-dark',
+                                                'support_agent'        => 'bg-secondary',
+                                                'marketing_manager'    => 'bg-danger',
+                                                default                => 'bg-secondary',
+                                            };
+                                            $roleTitle = ucwords(str_replace('_', ' ', $r));
+                                        ?>
+                                        <span class="badge <?= $badgeClass ?> text-uppercase px-2 py-1 me-1 mb-1">
+                                            <?= e($roleTitle) ?>
                                         </span>
-                                    <?php else: ?>
-                                        <span class="badge bg-secondary text-uppercase px-2 py-1">
-                                            <i class="bi bi-person-badge me-1"></i> Staff Member
-                                        </span>
-                                    <?php endif; ?>
+                                    <?php endforeach; ?>
                                 </td>
                                 <td class="text-center">
                                     <?php if ($s['status'] === 'active'): ?>
@@ -278,10 +287,17 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
                     <div class="form-text small">An invitation with a secure password setup link will be queued immediately.</div>
                 </div>
                 <div class="mb-3">
-                    <label class="form-label small fw-semibold">Role &amp; Permissions <span class="text-danger">*</span></label>
+                    <label class="form-label small fw-semibold">Departmental Role &amp; Permissions <span class="text-danger">*</span></label>
                     <select name="role" class="form-select" required>
-                        <option value="staff">Staff Member (Orders, Products, Inventory, Reviews, Messages)</option>
-                        <option value="admin">Administrator (Full Access including Settings, Staff, Coupons &amp; Audit Logs)</option>
+                        <option value="super_admin">Super Administrator (Complete Platform Oversight)</option>
+                        <option value="finance_manager">Finance Manager (Payments, M-Pesa, Refunds, Financials)</option>
+                        <option value="orders_manager">Orders Manager (Fulfillment, Dispatch, Delivery)</option>
+                        <option value="inventory_manager">Inventory Manager (Stock Adjustments &amp; Movements)</option>
+                        <option value="catalog_manager">Catalog Manager (Products, Categories, Media)</option>
+                        <option value="support_agent">Support Agent (Inquiries, Reviews, Customer Care)</option>
+                        <option value="marketing_manager">Marketing Manager (Coupons, Merchandising, Promotions)</option>
+                        <option value="admin">Administrator (Legacy Universal Access)</option>
+                        <option value="staff" selected>Staff Member (General Operations)</option>
                     </select>
                 </div>
             </div>
@@ -316,10 +332,17 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
                     </div>
                 </div>
                 <div class="mb-3" id="editRoleGroup">
-                    <label class="form-label small fw-semibold">Role <span class="text-danger">*</span></label>
+                    <label class="form-label small fw-semibold">Departmental Role <span class="text-danger">*</span></label>
                     <select name="role" id="editRole" class="form-select" required>
+                        <option value="super_admin">Super Administrator</option>
+                        <option value="finance_manager">Finance Manager</option>
+                        <option value="orders_manager">Orders Manager</option>
+                        <option value="inventory_manager">Inventory Manager</option>
+                        <option value="catalog_manager">Catalog Manager</option>
+                        <option value="support_agent">Support Agent</option>
+                        <option value="marketing_manager">Marketing Manager</option>
+                        <option value="admin">Administrator (Legacy)</option>
                         <option value="staff">Staff Member</option>
-                        <option value="admin">Administrator</option>
                     </select>
                     <div id="selfRoleWarning" class="form-text text-danger small" style="display: none;">
                         You cannot change your own administrative role.

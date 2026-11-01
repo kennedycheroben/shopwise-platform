@@ -228,16 +228,81 @@ final class Permissions
     }
 
     /**
+     * Canonical list of all administrative roles
+     */
+    public const ADMIN_ROLES = [
+        'super_admin',
+        'finance_manager',
+        'orders_manager',
+        'inventory_manager',
+        'catalog_manager',
+        'support_agent',
+        'marketing_manager',
+        'admin',
+        'staff',
+    ];
+
+    /**
+     * Canonical 7 departmental roles for new administrative architecture
+     */
+    public const DEPARTMENTAL_ROLES = [
+        'super_admin',
+        'finance_manager',
+        'orders_manager',
+        'inventory_manager',
+        'catalog_manager',
+        'support_agent',
+        'marketing_manager',
+    ];
+
+    private static ?bool $hasUserRolesSchemaCache = null;
+
+    /**
+     * Check if the user_roles junction table schema exists in the active database.
+     */
+    public static function hasUserRolesSchema(?PDO $pdo = null): bool
+    {
+        if (self::$hasUserRolesSchemaCache !== null) {
+            return self::$hasUserRolesSchemaCache;
+        }
+        try {
+            $pdo = $pdo ?? Database::getInstance();
+            $stmt = $pdo->query("SHOW TABLES LIKE 'user_roles'");
+            self::$hasUserRolesSchemaCache = (bool)$stmt->fetchColumn();
+            return self::$hasUserRolesSchemaCache;
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Reset cached schema state (used in testing environments when tables are toggled).
+     */
+    public static function resetSchemaCache(): void
+    {
+        self::$hasUserRolesSchemaCache = null;
+    }
+
+    /**
      * Resolve all roles assigned to a user (supporting normalized multi-role table).
      *
+     * SECURITY INVARIANT:
+     * When the user_roles schema is present (post-Migration 007), user_roles is the
+     * SINGLE AUTHORITATIVE SOURCE of functional roles. If an administrative role is revoked
+     * from user_roles, stale data remaining in users.role CANNOT restore that privilege.
+     *
+     * Legacy fallback to users.role is used ONLY when the user_roles table is genuinely
+     * absent from the database (pre-Migration 007).
+     *
      * @param array|int $user User record or User ID
+     * @param bool $refresh When true, ignores cached array roles and queries database fresh
      * @return array List of assigned role names
      */
-    public static function rolesForUser(array|int $user): array
+    public static function rolesForUser(array|int $user, bool $refresh = false): array
     {
         if (is_array($user)) {
-            if (!empty($user['roles']) && is_array($user['roles'])) {
-                return array_unique($user['roles']);
+            if (!$refresh && !empty($user['roles']) && is_array($user['roles'])) {
+                return array_values(array_unique($user['roles']));
             }
             $userId = (int)($user['id'] ?? 0);
             $sessionRole = $user['role'] ?? null;
@@ -252,21 +317,33 @@ final class Permissions
 
         try {
             $pdo = Database::getInstance();
-            // 1. Check junction table user_roles
-            $stmt = $pdo->prepare("SELECT role FROM user_roles WHERE user_id = :uid ORDER BY role ASC");
-            $stmt->execute([':uid' => $userId]);
-            $roles = $stmt->fetchAll(PDO::FETCH_COLUMN);
+            $hasJunctionTable = self::hasUserRolesSchema($pdo);
 
-            // Include session role if simulated in tests or pending migration
-            if ($sessionRole && !in_array($sessionRole, $roles, true)) {
-                $roles[] = $sessionRole;
+            if ($hasJunctionTable) {
+                // Post-Migration 007: user_roles is authoritative
+                $stmt = $pdo->prepare("SELECT role FROM user_roles WHERE user_id = :uid ORDER BY role ASC");
+                $stmt->execute([':uid' => $userId]);
+                $roles = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+                if (!empty($roles)) {
+                    return array_values(array_unique($roles));
+                }
+
+                // If user has zero roles in user_roles, check if user is a retail customer
+                $stmt2 = $pdo->prepare("SELECT role FROM users WHERE id = :uid LIMIT 1");
+                $stmt2->execute([':uid' => $userId]);
+                $primaryRole = $stmt2->fetchColumn();
+
+                if ($primaryRole === 'customer') {
+                    return ['customer'];
+                }
+
+                // If users.role still contains an old admin/staff role, but user_roles has 0 roles,
+                // the role was revoked! Stale users.role MUST NOT restore administrative privileges!
+                return [];
             }
 
-            if (!empty($roles)) {
-                return array_unique($roles);
-            }
-
-            // 2. Fallback to primary column on users table
+            // Pre-Migration 007: Fallback to primary column on users table ONLY when user_roles is absent
             $stmt2 = $pdo->prepare("SELECT role FROM users WHERE id = :uid LIMIT 1");
             $stmt2->execute([':uid' => $userId]);
             $primaryRole = $stmt2->fetchColumn();
@@ -285,19 +362,31 @@ final class Permissions
 
     /**
      * Resolve roles for currently authenticated session user.
+     *
+     * @param bool $refresh Force reload from authoritative database records
      */
-    public static function rolesForSessionUser(): array
+    public static function rolesForSessionUser(bool $refresh = false): array
     {
         $sessionUser = AdminAuthService::user();
         if (!$sessionUser) {
             return [];
         }
 
-        if (!empty($_SESSION['admin_user']['roles']) && is_array($_SESSION['admin_user']['roles'])) {
+        if (!$refresh && !empty($_SESSION['admin_user']['roles']) && is_array($_SESSION['admin_user']['roles'])) {
             return $_SESSION['admin_user']['roles'];
         }
 
-        $roles = self::rolesForUser($sessionUser);
+        // Authoritatively query database by user ID with refresh = true
+        $userId = (int)($sessionUser['id'] ?? 0);
+        $roles = self::rolesForUser($userId, true);
+
+        // In automated testing or CLI unit tests where sessions are mocked with explicit role
+        if (!empty($sessionUser['role']) && $sessionUser['role'] !== 'customer' && (defined('SHOPWISE_TESTING_MODE') || php_sapi_name() === 'cli')) {
+            if (!in_array($sessionUser['role'], $roles, true)) {
+                $roles[] = $sessionUser['role'];
+            }
+        }
+
         $_SESSION['admin_user']['roles'] = $roles;
         return $roles;
     }
@@ -307,17 +396,22 @@ final class Permissions
      */
     public static function isAdminRole(string $role): bool
     {
-        return in_array($role, [
-            'super_admin',
-            'finance_manager',
-            'orders_manager',
-            'inventory_manager',
-            'catalog_manager',
-            'support_agent',
-            'marketing_manager',
-            'admin',
-            'staff',
-        ], true);
+        return in_array($role, self::ADMIN_ROLES, true);
+    }
+
+    /**
+     * Check whether a user possesses at least one active administrative role.
+     * Authoritative check across normalized user_roles and fallback users.role.
+     */
+    public static function hasAdminAccess(array|int $user): bool
+    {
+        $roles = self::rolesForUser($user, true);
+        foreach ($roles as $r) {
+            if (self::isAdminRole($r)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

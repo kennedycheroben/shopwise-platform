@@ -274,6 +274,10 @@ CREATED_USER_IDS+=("$ADMIN_USER_ID" "$STAFF_USER_ID" "$CUST_USER_ID")
 
 if [ -n "$ADMIN_USER_ID" ] && [ -n "$STAFF_USER_ID" ] && [ -n "$CUST_USER_ID" ]; then
     pass "Throwaway accounts created: Admin ID #$ADMIN_USER_ID, Staff ID #$STAFF_USER_ID, Customer ID #$CUST_USER_ID"
+    # If user_roles schema is present, sync roles
+    if [ "$(run_sql "SHOW TABLES LIKE 'user_roles';")" = "user_roles" ]; then
+        run_sql "INSERT IGNORE INTO user_roles (user_id, role, assigned_at) VALUES ($ADMIN_USER_ID, 'admin', NOW()), ($STAFF_USER_ID, 'staff', NOW());"
+    fi
 else
     fail "Failed to create throwaway accounts"
     exit 1
