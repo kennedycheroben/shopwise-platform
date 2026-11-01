@@ -88,7 +88,9 @@ final class AdminAuthService
             return [false, 'Those sign-in details do not grant access to ShopWise administration.'];
         }
 
-        session_regenerate_id(true);
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_regenerate_id(true);
+        }
         unset($user['password_hash']);
         $user['roles'] = $assignedRoles;
         $user['auth_time'] = time();
@@ -106,7 +108,9 @@ final class AdminAuthService
     public static function logout(): void
     {
         unset($_SESSION['admin_user']);
-        session_regenerate_id(true);
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_regenerate_id(true);
+        }
     }
 
     /**
