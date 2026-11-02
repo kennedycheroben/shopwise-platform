@@ -39,8 +39,9 @@ use App\Services\SecurityContext;
 
 $pdo = Database::getInstance();
 $batchLimit = 100;
+$errorCount = 0;
 
-SecurityContext::runAsSystem(function () use ($pdo, $batchLimit) {
+SecurityContext::runAsSystem(function () use ($pdo, $batchLimit, &$errorCount) {
     $stmt = $pdo->prepare("
         SELECT id, order_number, total, expires_at
         FROM orders
@@ -55,7 +56,6 @@ SecurityContext::runAsSystem(function () use ($pdo, $batchLimit) {
     $totalOrders = count($orders);
     $expiredCount = 0;
     $recoveredPaidCount = 0;
-    $errorCount = 0;
 
     foreach ($orders as $order) {
         $orderId = (int)$order['id'];

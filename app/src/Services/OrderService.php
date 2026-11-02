@@ -242,7 +242,7 @@ final class OrderService
         ?string $expectedFrom = null,
         ?string $ip = null
     ): void {
-        Permissions::require('orders.manage');
+        Permissions::require('orders.manage', $actorId);
 
         if ($toStatus === 'cancelled') {
             self::cancel($orderId, $actorId, (string)$note, $expectedFrom, false, $ip);
@@ -255,7 +255,7 @@ final class OrderService
         }
 
         if ($toStatus === 'refunded') {
-            Permissions::require('orders.refund');
+            Permissions::require('orders.refund', $actorId);
         }
 
         Database::transaction(function (PDO $pdo) use ($orderId, $toStatus, $actorId, $note, $expectedFrom, $ip) {
@@ -335,7 +335,7 @@ final class OrderService
         bool $isExpiry = false,
         ?string $ip = null
     ): void {
-        Permissions::require('orders.manage');
+        Permissions::require('orders.manage', $actorId);
 
         Database::transaction(function (PDO $pdo) use ($orderId, $actorId, $note, $expectedFrom, $isExpiry, $ip) {
             $stmt = $pdo->prepare('SELECT id, status, payment_status, stock_released, total, order_number FROM orders WHERE id = :id FOR UPDATE');
@@ -445,7 +445,7 @@ final class OrderService
      */
     public static function recordRefund(int $orderId, string $referenceNote, int $actorId, ?string $ip = null): void
     {
-        Permissions::require('orders.refund');
+        Permissions::require('orders.refund', $actorId);
 
         $referenceNote = trim($referenceNote);
         if ($referenceNote === '') {
@@ -614,7 +614,7 @@ final class OrderService
      */
     public static function addInternalNote(int $orderId, string $note, int $actorId, ?string $ip = null): void
     {
-        Permissions::require('orders.manage');
+        Permissions::require('orders.manage', $actorId);
 
         $note = trim($note);
         if ($note === '') {
@@ -878,7 +878,23 @@ final class OrderService
                     $distanceKm = (float)$distQuote['distance_km'];
                     $deliveryPricingMethod = 'distance';
                 } elseif (!empty($choices['zone_id'])) {
-                    $zoneQuote = DeliveryService::quoteZone((int)$choices['zone_id'], $computedSubtotal);
+                    try {
+                        $zoneQuote = DeliveryService::quoteZone((int)$choices['zone_id'], $computedSubtotal);
+                    } catch (\InvalidArgumentException $iae) {
+                        throw new DomainException($iae->getMessage());
+                    }
+                    $deliveryFee = (float)$zoneQuote['fee'];
+                    $deliveryPricingMethod = 'zone';
+                } elseif (!empty($choices['county']) && !empty($choices['area'])) {
+                    $matchedZone = DeliveryService::matchZoneByLocation((string)$choices['county'], (string)$choices['area']);
+                    if (!$matchedZone) {
+                        throw new DomainException("Delivery is not available for '" . $choices['county'] . " - " . $choices['area'] . "'. Please select a supported delivery zone.");
+                    }
+                    try {
+                        $zoneQuote = DeliveryService::quoteZone((int)$matchedZone['id'], $computedSubtotal);
+                    } catch (\InvalidArgumentException $iae) {
+                        throw new DomainException($iae->getMessage());
+                    }
                     $deliveryFee = (float)$zoneQuote['fee'];
                     $deliveryPricingMethod = 'zone';
                 } else {

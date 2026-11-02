@@ -33,10 +33,10 @@ class ImageUploadService
         $absoluteDir = rtrim($this->baseUploadDir, '/') . "/{$year}/{$month}";
 
         if (!is_dir($absoluteDir)) {
-            if (!mkdir($absoluteDir, 0755, true) && !is_dir($absoluteDir)) {
-                throw new RuntimeException("Upload directory '{$absoluteDir}' could not be created. Please verify server directory permissions (0755).");
+            if (!mkdir($absoluteDir, 0777, true) && !is_dir($absoluteDir)) {
+                throw new RuntimeException("Upload directory '{$absoluteDir}' could not be created. Please verify server directory permissions.");
             }
-            chmod($absoluteDir, 0755);
+            @chmod($absoluteDir, 0777);
         }
 
         if (!is_writable($absoluteDir)) {

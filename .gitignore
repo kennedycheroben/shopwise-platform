@@ -9,6 +9,7 @@ app/config/config.testing.php
 # Test Artifacts & Uploads
 public/uploads_test/
 app/storage/rate_limits_test/
+app/storage/rate_limits_cli/
 
 # Template References & Scratch
 _template_reference/

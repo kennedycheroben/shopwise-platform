@@ -743,6 +743,8 @@ document.addEventListener('DOMContentLoaded', function () {
       const payload = {
         delivery_method: dmPickupRadio && dmPickupRadio.checked ? 'pickup' : 'delivery',
         zone_id: zoneIdInput ? zoneIdInput.value : '',
+        county: countySelect ? countySelect.value : '',
+        area: areaSelect ? areaSelect.value : '',
         latitude: latInput ? latInput.value : '',
         longitude: lngInput ? lngInput.value : '',
         coupon_code: '<?= e($couponCode) ?>',

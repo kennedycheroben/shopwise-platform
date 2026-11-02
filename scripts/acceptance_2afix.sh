@@ -123,12 +123,11 @@ cleanup() {
     if [ -n "${LOCKOUT_JAR:-}" ]; then rm -f "$LOCKOUT_JAR"*; fi
     # Clean up test users and login attempts from DB if not preserved for further steps
     if [ "$KEEP_TEST_USERS" != "1" ]; then
-        local user_ids=()
+        user_ids=()
         [ -n "${ADMIN_USER_ID:-}" ] && user_ids+=("$ADMIN_USER_ID")
         [ -n "${CUST_USER_ID:-}" ] && user_ids+=("$CUST_USER_ID")
         [ -n "${STAFF_USER_ID:-}" ] && user_ids+=("$STAFF_USER_ID")
         if [ ${#user_ids[@]} -gt 0 ]; then
-            local id_csv
             id_csv=$(IFS=,; echo "${user_ids[*]}")
             run_sql "DELETE FROM users WHERE id IN ($id_csv);" >/dev/null 2>&1 || true
         fi
@@ -552,12 +551,11 @@ if [ "$DB_AVAILABLE" -eq 1 ]; then
         fail "Staff login failed (HTTP $HTTP_CODE)"
     fi
     if [ "$KEEP_TEST_USERS" != "1" ]; then
-        local user_ids=()
+        user_ids=()
         [ -n "${ADMIN_USER_ID:-}" ] && user_ids+=("$ADMIN_USER_ID")
         [ -n "${CUST_USER_ID:-}" ] && user_ids+=("$CUST_USER_ID")
         [ -n "${STAFF_USER_ID:-}" ] && user_ids+=("$STAFF_USER_ID")
         if [ ${#user_ids[@]} -gt 0 ]; then
-            local id_csv
             id_csv=$(IFS=,; echo "${user_ids[*]}")
             run_sql "DELETE FROM users WHERE id IN ($id_csv);" >/dev/null 2>&1 || true
         fi

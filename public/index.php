@@ -613,9 +613,24 @@ $router->post('/checkout/quote', function () use ($cartService) {
     }
 
     $zoneId = (!empty($input['zone_id']) && is_numeric($input['zone_id'])) ? (int)$input['zone_id'] : null;
+    $county = trim((string)($input['county'] ?? ''));
+    $area = trim((string)($input['area'] ?? ''));
     $lat = (isset($input['latitude']) && is_numeric($input['latitude'])) ? (float)$input['latitude'] : ((isset($input['lat']) && is_numeric($input['lat'])) ? (float)$input['lat'] : null);
     $lng = (isset($input['longitude']) && is_numeric($input['longitude'])) ? (float)$input['longitude'] : ((isset($input['lng']) && is_numeric($input['lng'])) ? (float)$input['lng'] : null);
     $couponCode = trim((string)($input['coupon_code'] ?? ($cart['coupon_code'] ?? '')));
+
+    // Match zone automatically from county/area if zone_id not explicitly given
+    if ($zoneId === null && $lat === null && $lng === null && ($county !== '' || $area !== '')) {
+        $matched = \App\Services\DeliveryService::matchZoneByLocation($county, $area);
+        if ($matched) {
+            $zoneId = (int)$matched['id'];
+        } else {
+            send_json_response([
+                'success' => false,
+                'error'   => 'Delivery is unavailable for ' . htmlspecialchars($county . ($area ? " - {$area}" : ''), ENT_QUOTES, 'UTF-8') . '. Please choose a supported delivery zone.',
+            ], 400);
+        }
+    }
 
     // Validate coordinates if provided
     if ($lat !== null || $lng !== null) {
@@ -630,10 +645,16 @@ $router->post('/checkout/quote', function () use ($cartService) {
     // Validate zone if provided
     if ($zoneId !== null) {
         $zone = \App\Services\DeliveryService::getZoneById($zoneId);
-        if (!$zone || empty($zone['is_active'])) {
+        if (!$zone) {
             send_json_response([
                 'success' => false,
-                'error'   => 'The selected delivery zone is unavailable or inactive.',
+                'error'   => 'The selected delivery location could not be found.',
+            ], 400);
+        }
+        if (empty($zone['is_active'])) {
+            send_json_response([
+                'success' => false,
+                'error'   => 'Delivery to ' . htmlspecialchars($zone['county'] . ' - ' . $zone['area'], ENT_QUOTES, 'UTF-8') . ' is currently inactive.',
             ], 400);
         }
     }
@@ -777,15 +798,14 @@ $router->post('/checkout/place', function () use ($cartService) {
                 $streetDetails = ($streetDetails ? $streetDetails . ' ' : '') . $savedAddr['address_line_2'];
             }
             // Map county/area to zone
-            $zones = \App\Services\DeliveryService::listZones(['county' => $county, 'is_active' => 1]);
-            foreach ($zones as $z) {
-                if (strcasecmp($z['area'], $area) === 0) {
-                    $zoneId = (int)$z['id'];
-                    break;
+            $matchedSavedZone = \App\Services\DeliveryService::matchZoneByLocation((string)$county, (string)$area);
+            if ($matchedSavedZone) {
+                $zoneId = (int)$matchedSavedZone['id'];
+            } else {
+                $zones = \App\Services\DeliveryService::listZones(['county' => $county, 'is_active' => 1]);
+                if (!empty($zones)) {
+                    $zoneId = (int)$zones[0]['id'];
                 }
-            }
-            if ($zoneId === null && !empty($zones)) {
-                $zoneId = (int)$zones[0]['id'];
             }
         } else {
             $county = trim((string)($_POST['county'] ?? ''));
@@ -800,9 +820,46 @@ $router->post('/checkout/place', function () use ($cartService) {
                     flash_set('error', 'Pinpoint map coordinates must be within Kenya boundaries.');
                     redirect('checkout');
                 }
-            } elseif ($zoneId === null) {
-                flash_set('error', 'Please choose a delivery zone or pinpoint your delivery location on the map.');
-                redirect('checkout');
+            } else {
+                // Zone-based delivery verification
+                if ($county === '' || $area === '') {
+                    flash_set('error', 'Please select both your County and Area/Neighborhood for delivery.');
+                    redirect('checkout');
+                }
+
+                if ($streetDetails === '') {
+                    flash_set('error', 'Please provide your street address, building or landmark details.');
+                    redirect('checkout');
+                }
+
+                // If zoneId was omitted, resolve from county & area
+                if ($zoneId === null) {
+                    $matchedZone = \App\Services\DeliveryService::matchZoneByLocation($county, $area);
+                    if ($matchedZone) {
+                        $zoneId = (int)$matchedZone['id'];
+                    }
+                }
+
+                if ($zoneId === null) {
+                    flash_set('error', "Delivery is unavailable for '{$county} - {$area}'. Please choose a supported delivery zone.");
+                    redirect('checkout');
+                }
+
+                $zoneRecord = \App\Services\DeliveryService::getZoneById($zoneId);
+                if (!$zoneRecord) {
+                    flash_set('error', 'The selected delivery zone could not be found.');
+                    redirect('checkout');
+                }
+                if (empty($zoneRecord['is_active'])) {
+                    flash_set('error', "Selected delivery zone '{$zoneRecord['county']} - {$zoneRecord['area']}' is currently inactive.");
+                    redirect('checkout');
+                }
+
+                // Client price/zone tampering defense: verify zone matches selected county & area
+                $matchedForLocation = \App\Services\DeliveryService::matchZoneByLocation($county, $area);
+                if ($matchedForLocation && (int)$matchedForLocation['id'] !== $zoneId) {
+                    $zoneId = (int)$matchedForLocation['id'];
+                }
             }
 
             // Save address to address book if requested
@@ -1891,6 +1948,24 @@ if (defined('SHOPWISE_TESTING_MODE') && SHOPWISE_TESTING_MODE === true) {
     $router->post('/cart/test/clear-rate-limits', function () {
         CartService::clearRateLimits();
         send_json_response(['success' => true, 'message' => 'Rate limits cleared.']);
+    });
+
+    $router->post('/test/cleanup-test-uploads', function () {
+        $uploadBase = dirname(__DIR__) . '/public/uploads/products';
+        if (is_dir($uploadBase)) {
+            $iterator = new RecursiveIteratorIterator(
+                new RecursiveDirectoryIterator($uploadBase, RecursiveDirectoryIterator::SKIP_DOTS),
+                RecursiveIteratorIterator::CHILD_FIRST
+            );
+            foreach ($iterator as $item) {
+                if ($item->isFile()) {
+                    @unlink($item->getPathname());
+                } elseif ($item->isDir()) {
+                    @rmdir($item->getPathname());
+                }
+            }
+        }
+        send_json_response(['success' => true]);
     });
 
     $router->get('/test/security-context-entry', function () {

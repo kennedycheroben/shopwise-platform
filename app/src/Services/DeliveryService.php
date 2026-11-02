@@ -287,6 +287,83 @@ final class DeliveryService
         return self::getZone($id);
     }
 
+    /**
+     * Match a given county and area/neighborhood string to an active delivery zone.
+     * Supports exact matching, comma-separated area matching, and partial matching.
+     */
+    public static function matchZoneByLocation(string $county, string $area): ?array
+    {
+        $county = trim($county);
+        $area = trim($area);
+        if ($county === '' || $area === '') {
+            return null;
+        }
+
+        $pdo = Database::getInstance();
+
+        // 1. Exact county & area match (active zones only)
+        $stmt = $pdo->prepare("SELECT * FROM delivery_zones WHERE is_active = 1 AND LOWER(county) = LOWER(:county) AND LOWER(area) = LOWER(:area) LIMIT 1");
+        $stmt->execute([':county' => $county, ':area' => $area]);
+        $zone = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($zone) {
+            return $zone;
+        }
+
+        // 2. Fetch all active zones to test sub-area lists and composite county names
+        $zones = self::listZones(['is_active' => 1]);
+        $areaLower = mb_strtolower($area);
+        $countyLower = mb_strtolower($county);
+
+        // Check if county matches exactly or is in composite county (e.g. Kiambu in "Kiambu, Machakos & Kajiado")
+        foreach ($zones as $z) {
+            $zCountyLower = mb_strtolower($z['county']);
+            $countyMatches = ($zCountyLower === $countyLower)
+                || str_contains($zCountyLower, $countyLower);
+
+            if ($countyMatches) {
+                // Check if area matches whole or any token in comma-separated area string
+                $zAreaLower = mb_strtolower($z['area']);
+                if ($zAreaLower === $areaLower) {
+                    return $z;
+                }
+
+                // Check comma-separated tokens
+                $tokens = array_map('trim', explode(',', $zAreaLower));
+                foreach ($tokens as $token) {
+                    // Remove parens details like (Embakasi, Donholm) or (via Courier)
+                    $cleanToken = trim(preg_replace('/\s*\(.*?\)/', '', $token));
+                    if ($cleanToken === $areaLower || $token === $areaLower) {
+                        return $z;
+                    }
+                    if (str_contains($token, $areaLower) && strlen($areaLower) >= 3) {
+                        return $z;
+                    }
+                }
+
+                if (str_contains($zAreaLower, $areaLower) && strlen($areaLower) >= 3) {
+                    return $z;
+                }
+            }
+        }
+
+        // 3. Fallback: check across all zones if area is unique across all counties
+        foreach ($zones as $z) {
+            $zAreaLower = mb_strtolower($z['area']);
+            $tokens = array_map('trim', explode(',', $zAreaLower));
+            foreach ($tokens as $token) {
+                $cleanToken = trim(preg_replace('/\s*\(.*?\)/', '', $token));
+                if ($cleanToken === $areaLower || $token === $areaLower) {
+                    return $z;
+                }
+                if (str_contains($cleanToken, $areaLower) && strlen($areaLower) >= 3) {
+                    return $z;
+                }
+            }
+        }
+
+        return null;
+    }
+
     public static function createZone(array $data, int $actorId, string $ip): int
     {
         $county = trim($data['county'] ?? '');

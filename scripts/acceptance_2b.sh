@@ -216,6 +216,7 @@ cleanup() {
         }
         echo $orphans;
     ')
+    curl -s -X POST http://127.0.0.1/shopwise-platform/public/test/cleanup-test-uploads > /dev/null 2>&1 || true
     echo "  Cleaned orphan upload files: $ORPHANS_REMOVED"
 
     # Also clean test temp execution file if exists

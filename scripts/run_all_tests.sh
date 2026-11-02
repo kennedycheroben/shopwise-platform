@@ -160,6 +160,10 @@ run_suite "acceptance_3a"    "scripts/acceptance_3a.sh"
 run_suite "acceptance_3b"    "scripts/acceptance_3b.sh"
 run_suite "acceptance_4"     "scripts/acceptance_4.sh"
 run_suite "acceptance_5"     "scripts/acceptance_5.sh"
+run_suite "prove_csrf"       "scripts/prove_csrf.sh"
+run_suite "category_slugs"   "scripts/test_category_slugs.sh"
+run_suite "delivery_pricing" "scripts/test_delivery_pricing.sh"
+run_suite "customer_reply"   "scripts/test_customer_support_reply.sh"
 
 echo -e "${BOLD}--- Running Suite: check_stock_parity.py ---${NC}"
 PARITY_LOG="$TMP_OUT_DIR/stock_parity.log"
@@ -272,6 +276,49 @@ parse_parity() {
     fi
 }
 
+parse_csrf() {
+    local log="$TMP_OUT_DIR/prove_csrf.log"
+    local clean_text
+    clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
+    local total
+    total=$(echo "$clean_text" | grep -oP 'SUCCESS: ALL \K[0-9]+' | tail -n 1 || echo 0)
+    if echo "$clean_text" | grep -q "SUCCESS: ALL"; then
+        echo "${total:-0} 0"
+    else
+        echo "0 1"
+    fi
+}
+
+parse_slugs() {
+    local log="$TMP_OUT_DIR/category_slugs.log"
+    local clean_text
+    clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
+    local passed failed
+    passed=$(echo "$clean_text" | grep -oP 'CATEGORY SLUG TEST SUMMARY:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    failed=$(echo "$clean_text" | grep -oP 'Passed,\s*\K[0-9]+(?=\s*Failed)' | tail -n 1 || echo 0)
+    echo "${passed:-0} ${failed:-0}"
+}
+
+parse_delivery() {
+    local log="$TMP_OUT_DIR/delivery_pricing.log"
+    local clean_text
+    clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
+    local passed failed
+    passed=$(echo "$clean_text" | grep -oP 'Delivery Pricing Tests:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    failed=$(echo "$clean_text" | grep -oP 'passed,\s*\K[0-9]+(?=\s*failed)' | tail -n 1 || echo 0)
+    echo "${passed:-0} ${failed:-0}"
+}
+
+parse_reply() {
+    local log="$TMP_OUT_DIR/customer_reply.log"
+    local clean_text
+    clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
+    local passed failed
+    passed=$(echo "$clean_text" | grep -oP 'Customer Support Reply Tests:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    failed=$(echo "$clean_text" | grep -oP 'passed,\s*\K[0-9]+(?=\s*failed)' | tail -n 1 || echo 0)
+    echo "${passed:-0} ${failed:-0}"
+}
+
 read -r P_2A F_2A < <(parse_2afix)
 read -r P_2B F_2B < <(parse_2b)
 read -r P_2C1 F_2C1 < <(parse_2c1)
@@ -280,10 +327,14 @@ read -r P_3A F_3A < <(parse_3a)
 read -r P_3B F_3B < <(parse_3b)
 read -r P_4 F_4 < <(parse_4)
 read -r P_5 F_5 < <(parse_5)
+read -r P_CSRF F_CSRF < <(parse_csrf)
+read -r P_SLUG F_SLUG < <(parse_slugs)
+read -r P_DELIV F_DELIV < <(parse_delivery)
+read -r P_REPLY F_REPLY < <(parse_reply)
 read -r P_PAR F_PAR < <(parse_parity)
 
-TOTAL_PASSED=$((P_2A + P_2B + P_2C1 + P_2C2 + P_3A + P_3B + P_4 + P_5 + P_PAR))
-TOTAL_FAILED=$((F_2A + F_2B + F_2C1 + F_2C2 + F_3A + F_3B + F_4 + F_5 + F_PAR))
+TOTAL_PASSED=$((P_2A + P_2B + P_2C1 + P_2C2 + P_3A + P_3B + P_4 + P_5 + P_CSRF + P_SLUG + P_DELIV + P_REPLY + P_PAR))
+TOTAL_FAILED=$((F_2A + F_2B + F_2C1 + F_2C2 + F_3A + F_3B + F_4 + F_5 + F_CSRF + F_SLUG + F_DELIV + F_REPLY + F_PAR))
 
 echo -e "${BOLD}${CYAN}==============================================================================${NC}"
 echo -e "${BOLD}${CYAN}                       TEST SUITE EXECUTION SUMMARY                           ${NC}"
@@ -298,6 +349,10 @@ printf "%-30s | %-12s | %-12s | %-10s\n" "acceptance_3a.sh"    "$P_3A" "$F_3A" "
 printf "%-30s | %-12s | %-12s | %-10s\n" "acceptance_3b.sh"    "$P_3B" "$F_3B" "$([ "$F_3B" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
 printf "%-30s | %-12s | %-12s | %-10s\n" "acceptance_4.sh"     "$P_4" "$F_4" "$([ "$F_4" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
 printf "%-30s | %-12s | %-12s | %-10s\n" "acceptance_5.sh"     "$P_5" "$F_5" "$([ "$F_5" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
+printf "%-30s | %-12s | %-12s | %-10s\n" "prove_csrf.sh"       "$P_CSRF" "$F_CSRF" "$([ "$F_CSRF" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
+printf "%-30s | %-12s | %-12s | %-10s\n" "test_category_slugs" "$P_SLUG" "$F_SLUG" "$([ "$F_SLUG" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
+printf "%-30s | %-12s | %-12s | %-10s\n" "test_delivery_pricing" "$P_DELIV" "$F_DELIV" "$([ "$F_DELIV" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
+printf "%-30s | %-12s | %-12s | %-10s\n" "test_customer_reply" "$P_REPLY" "$F_REPLY" "$([ "$F_REPLY" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
 printf "%-30s | %-12s | %-12s | %-10s\n" "check_stock_parity.py" "$P_PAR" "$F_PAR" "$([ "$F_PAR" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
 echo "-------------------------------+--------------+--------------+------------"
 printf "%-30s | %-12s | %-12s | %-10s\n" "TOTAL" "$TOTAL_PASSED" "$TOTAL_FAILED" "$([ "$TOTAL_FAILED" -eq 0 ] && echo -e "${GREEN}ALL PASS${NC}" || echo -e "${RED}FAILURES${NC}")"

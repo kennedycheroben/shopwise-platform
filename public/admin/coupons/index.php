@@ -135,7 +135,7 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
     <!-- Coupons Table Card -->
     <div class="card border-0 shadow-sm">
         <div class="card-body p-0">
-            <div class="table-responsive">
+            <div class="table-responsive" style="min-height: 240px;">
                 <table class="table table-hover align-middle mb-0">
                     <thead class="table-light">
                         <tr>
@@ -212,7 +212,7 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
                                     </td>
                                     <td class="text-end pe-3">
                                         <div class="dropdown">
-                                            <button class="btn btn-sm btn-light border dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                                            <button class="btn btn-sm btn-light border dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" data-bs-boundary="viewport">
                                                 Actions
                                             </button>
                                             <ul class="dropdown-menu dropdown-menu-end shadow-sm">
@@ -413,3 +413,5 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
         </div>
     </div>
 </div>
+
+<?php require dirname(__DIR__, 3) . '/app/views/admin/footer.php'; ?>

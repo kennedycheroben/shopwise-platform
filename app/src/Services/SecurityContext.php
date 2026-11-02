@@ -104,6 +104,8 @@ final class SecurityContext
                 'orders.expire',
                 'orders.status_transition',
                 'orders.manage',
+                'orders.mark_as_paid',
+                'orders.refund',
                 'inventory.adjust',
                 'email.dispatch',
                 'email.queue',

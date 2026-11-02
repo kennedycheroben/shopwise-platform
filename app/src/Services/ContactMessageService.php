@@ -147,19 +147,36 @@ HTML;
                     "\"{$msg['message']}\"\n\n" .
                     "ShopWise Kenya Customer Support Team ({$supportEmail})\n";
 
-        $mailer = new MailerService();
-        $mailer->queueEmail($msg['email'], $msg['name'], $subject, $htmlBody, $textBody);
-
-        // Mark as replied
         $pdo = Database::getInstance();
-        $stmt = $pdo->prepare("UPDATE contact_messages SET status = 'replied' WHERE id = :id");
-        $stmt->execute([':id' => $id]);
+        $needsCommit = false;
+        if (!$pdo->inTransaction()) {
+            $pdo->beginTransaction();
+            $needsCommit = true;
+        }
 
-        AuditLogger::log($actorId, 'message_reply', 'contact_message', $id, [
-            'to_email' => $msg['email'],
-            'subject'  => $subject,
-            'reply'    => $replyBody,
-        ], $ip);
+        try {
+            $mailer = new MailerService();
+            $mailer->queueEmail($msg['email'], $msg['name'], $subject, $htmlBody, $textBody);
+
+            // Mark as replied
+            $stmt = $pdo->prepare("UPDATE contact_messages SET status = 'replied' WHERE id = :id");
+            $stmt->execute([':id' => $id]);
+
+            AuditLogger::log($actorId, 'message_reply', 'contact_message', $id, [
+                'to_email' => $msg['email'],
+                'subject'  => $subject,
+                'reply'    => $replyBody,
+            ], $ip);
+
+            if ($needsCommit) {
+                $pdo->commit();
+            }
+        } catch (\Throwable $e) {
+            if ($needsCommit && $pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            throw $e;
+        }
     }
 
     /**

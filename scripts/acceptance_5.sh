@@ -1282,6 +1282,21 @@ USER_COUPON_ID=$(SHOPWISE_CONFIG=testing "$PHP_CMD" -r "
 ")
 CREATED_USER_IDS+=("$USER_COUPON_ID")
 
+ADMIN_COUPON_EMAIL="coupon_admin_${RAND_SUF}@test.local"
+ADMIN_COUPON_ID=$(SHOPWISE_CONFIG=testing "$PHP_CMD" -r "
+    require 'app/bootstrap.php';
+    use App\Database\Database;
+    \$pdo = Database::getInstance();
+    \$pwd = password_hash('AdminPass123!', PASSWORD_BCRYPT);
+    \$stmt = \$pdo->prepare(\"INSERT INTO users (first_name, last_name, email, password_hash, role, status, email_verified_at, created_at, updated_at) VALUES ('Admin', 'Coup', :e, :p, 'admin', 'active', NOW(), NOW(), NOW())\");
+    \$stmt->execute([':e' => '$ADMIN_COUPON_EMAIL', ':p' => \$pwd]);
+    \$uid = \$pdo->lastInsertId();
+    \$stmtRole = \$pdo->prepare(\"INSERT INTO user_roles (user_id, role, assigned_at) VALUES (:uid, 'admin', NOW())\");
+    \$stmtRole->execute([':uid' => \$uid]);
+    echo \$uid;
+")
+CREATED_USER_IDS+=("$ADMIN_COUPON_ID")
+
 COUPON_LIFECYCLE_RES=$(SHOPWISE_CONFIG=testing "$PHP_CMD" -r "
     require 'app/bootstrap.php';
     use App\Database\Database;
@@ -1297,7 +1312,7 @@ COUPON_LIFECYCLE_RES=$(SHOPWISE_CONFIG=testing "$PHP_CMD" -r "
         'min_spend'   => 200,
         'usage_limit' => 5,
         'is_active'   => 1
-    ], 1, '127.0.0.1');
+    ], $ADMIN_COUPON_ID, '127.0.0.1');
 
     \$coupon = CouponService::getByCode(\$cCode);
     \$cid = (int)\$coupon['id'];
@@ -1317,15 +1332,15 @@ COUPON_LIFECYCLE_RES=$(SHOPWISE_CONFIG=testing "$PHP_CMD" -r "
     \$countAfterOrder = (int)\$pdo->query(\"SELECT used_count FROM coupons WHERE id = \$cid\")->fetchColumn();
 
     // Cancel unpaid order -> releases coupon
-    OrderService::cancel((int)\$ordUnpaid['id'], 1, 'Customer cancelled unpaid', 'pending_payment', false, '127.0.0.1');
+    OrderService::cancel((int)\$ordUnpaid['id'], $ADMIN_COUPON_ID, 'Customer cancelled unpaid', 'pending_payment', false, '127.0.0.1');
     \$countAfterCancel = (int)\$pdo->query(\"SELECT used_count FROM coupons WHERE id = \$cid\")->fetchColumn();
 
     // Place order and mark paid, then cancel -> paid order keeps coupon
     \$ordPaid = OrderService::createFromCart(\$cart, \$choices, $USER_COUPON_ID, 'paid_coup_' . uniqid(), '127.0.0.1');
-    OrderService::markAsPaid((int)\$ordPaid['id'], 'QAA' . bin2hex(random_bytes(3)) . '1', 'Manual paid test', 1, '127.0.0.1');
+    OrderService::markAsPaid((int)\$ordPaid['id'], 'QAA' . bin2hex(random_bytes(3)) . '1', 'Manual paid test', $ADMIN_COUPON_ID, '127.0.0.1');
     \$countAfterPaid = (int)\$pdo->query(\"SELECT used_count FROM coupons WHERE id = \$cid\")->fetchColumn();
 
-    OrderService::cancel((int)\$ordPaid['id'], 1, 'Customer cancelled paid', 'paid', false, '127.0.0.1');
+    OrderService::cancel((int)\$ordPaid['id'], $ADMIN_COUPON_ID, 'Customer cancelled paid', 'paid', false, '127.0.0.1');
     \$countAfterPaidCancel = (int)\$pdo->query(\"SELECT used_count FROM coupons WHERE id = \$cid\")->fetchColumn();
 
     echo json_encode([

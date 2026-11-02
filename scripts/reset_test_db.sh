@@ -91,5 +91,6 @@ fi
 
 # 7. Initialize dedicated test rate limits directory via web server
 curl -s -X POST http://127.0.0.1/shopwise-platform/public/cart/test/clear-rate-limits > /dev/null 2>&1 || true
+curl -s -X POST http://127.0.0.1/shopwise-platform/public/test/cleanup-test-uploads > /dev/null 2>&1 || true
 
 echo "=== Test Database '$DB_NAME' successfully initialized and ready for test suites ==="
