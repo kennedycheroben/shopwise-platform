@@ -12,11 +12,13 @@ SET FOREIGN_KEY_CHECKS = 0;
 DROP TABLE IF EXISTS `login_attempts`;
 DROP TABLE IF EXISTS `email_verifications`;
 DROP TABLE IF EXISTS `password_resets`;
+DROP TABLE IF EXISTS `user_roles`;
+DROP TABLE IF EXISTS `roles`;
 DROP TABLE IF EXISTS `users`;
 
 CREATE TABLE `users` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `role` ENUM('customer', 'admin', 'staff') NOT NULL DEFAULT 'customer',
+  `role` VARCHAR(50) NOT NULL DEFAULT 'customer',
   `first_name` VARCHAR(100) NOT NULL,
   `last_name` VARCHAR(100) NOT NULL,
   `email` VARCHAR(191) NOT NULL,
@@ -38,6 +40,30 @@ CREATE TABLE `users` (
   KEY `idx_users_status` (`status`),
   KEY `idx_users_phone` (`phone`),
   KEY `idx_users_created_at` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `roles` (
+  `name` VARCHAR(50) NOT NULL,
+  `display_name` VARCHAR(100) NOT NULL,
+  `description` VARCHAR(255) NOT NULL,
+  `department` VARCHAR(50) NOT NULL,
+  `is_system` TINYINT(1) NOT NULL DEFAULT 1,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `user_roles` (
+  `user_id` BIGINT UNSIGNED NOT NULL,
+  `role` VARCHAR(50) NOT NULL,
+  `assigned_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `assigned_by` BIGINT UNSIGNED NULL,
+  PRIMARY KEY (`user_id`, `role`),
+  KEY `idx_user_roles_role` (`role`),
+  KEY `idx_user_roles_assigned_by` (`assigned_by`),
+  CONSTRAINT `fk_user_roles_user` FOREIGN KEY (`user_id`)
+    REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_user_roles_role` FOREIGN KEY (`role`)
+    REFERENCES `roles` (`name`) ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `password_resets` (

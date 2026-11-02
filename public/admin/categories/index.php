@@ -22,11 +22,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     try {
         if ($action === 'create') {
-            CategoryService::create($_POST, $actorId, $ip);
+            $payload = [
+                'name'        => $_POST['name'] ?? '',
+                'parent_id'   => $_POST['parent_id'] ?? null,
+                'description' => $_POST['description'] ?? '',
+                'sort_order'  => $_POST['sort_order'] ?? 0,
+                'is_active'   => $_POST['is_active'] ?? null,
+            ];
+            CategoryService::create($payload, $actorId, $ip);
             flash_set('success', 'Category created successfully.');
         } elseif ($action === 'update') {
             $catId = (int)($_POST['id'] ?? 0);
-            CategoryService::update($catId, $_POST, $actorId, $ip);
+            $payload = [
+                'name'        => $_POST['name'] ?? '',
+                'parent_id'   => $_POST['parent_id'] ?? null,
+                'description' => $_POST['description'] ?? '',
+                'sort_order'  => $_POST['sort_order'] ?? 0,
+                'is_active'   => $_POST['is_active'] ?? null,
+            ];
+            CategoryService::update($catId, $payload, $actorId, $ip);
             flash_set('success', 'Category updated successfully.');
         } elseif ($action === 'delete') {
             // Delete requires categories.delete permission (Admin only)
@@ -135,7 +149,12 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
                                         <?php endif; ?>
                                     </td>
                                     <td>
-                                        <code class="text-muted" style="font-size: 12px;"><?= e($cat['slug']) ?></code>
+                                        <div class="d-flex align-items-center gap-1">
+                                            <code class="text-secondary bg-light px-2 py-1 rounded border" style="font-size: 12px;"><?= e($cat['slug']) ?></code>
+                                            <span class="badge bg-light text-muted border" style="font-size: 10px;" title="System-generated immutable slug">
+                                                <i class="bi bi-lock-fill"></i> Auto
+                                            </span>
+                                        </div>
                                     </td>
                                     <td>
                                         <?php if (!empty($cat['parent_name'])): ?>
@@ -209,9 +228,15 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
                     <input type="text" class="form-control" id="create_name" name="name" required placeholder="e.g. Traditional Fabrics">
                 </div>
                 <div class="mb-3">
-                    <label for="create_slug" class="form-label">URL Slug</label>
-                    <input type="text" class="form-control" id="create_slug" name="slug" placeholder="Auto-generated if left blank">
-                    <div class="form-text">Used in website links (e.g. /category/traditional-fabrics).</div>
+                    <label class="form-label text-muted d-flex justify-content-between align-items-center">
+                        <span>URL Slug</span>
+                        <span class="badge bg-light text-muted border"><i class="bi bi-lock-fill me-1"></i>System Generated</span>
+                    </label>
+                    <div class="input-group">
+                        <span class="input-group-text bg-light text-muted" style="font-size: 13px;">/category/</span>
+                        <input type="text" class="form-control bg-light text-muted" id="create_slug_preview" readonly placeholder="auto-generated-from-name" disabled>
+                    </div>
+                    <div class="form-text">Generated automatically from the category name. URL slugs are permanent and immutable once created.</div>
                 </div>
                 <div class="mb-3">
                     <label for="create_parent_id" class="form-label">Parent Category</label>
@@ -265,8 +290,15 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
                     <input type="text" class="form-control" id="edit_name" name="name" required>
                 </div>
                 <div class="mb-3">
-                    <label for="edit_slug" class="form-label">URL Slug <span class="text-danger">*</span></label>
-                    <input type="text" class="form-control" id="edit_slug" name="slug" required>
+                    <label class="form-label text-muted d-flex justify-content-between align-items-center">
+                        <span>URL Slug</span>
+                        <span class="badge bg-light text-muted border"><i class="bi bi-lock-fill me-1"></i>Immutable</span>
+                    </label>
+                    <div class="input-group">
+                        <span class="input-group-text bg-light text-muted" style="font-size: 13px;">/category/</span>
+                        <input type="text" class="form-control bg-light text-muted" id="edit_slug_display" readonly disabled>
+                    </div>
+                    <div class="form-text">Category URL slugs are permanent to maintain SEO ranking and prevent breaking customer links. Renaming this category will not alter its slug.</div>
                 </div>
                 <div class="mb-3">
                     <label for="edit_parent_id" class="form-label">Parent Category</label>
@@ -333,6 +365,19 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
 $pageScripts = <<<HTML
 <script>
 document.addEventListener('DOMContentLoaded', function () {
+    // Live preview for auto-generated slug in create modal
+    const nameInput = document.getElementById('create_name');
+    const slugPreview = document.getElementById('create_slug_preview');
+    if (nameInput && slugPreview) {
+        nameInput.addEventListener('input', function () {
+            let text = this.value.toLowerCase();
+            text = text.replace(/['’`]/g, '');
+            text = text.replace(/[^a-z0-9]+/g, '-');
+            text = text.replace(/^-+|-+$/g, '');
+            slugPreview.value = text || 'auto-generated-from-name';
+        });
+    }
+
     // Edit category modal population
     const editModal = new bootstrap.Modal(document.getElementById('editCategoryModal'));
     document.querySelectorAll('.edit-cat-btn').forEach(btn => {
@@ -347,7 +392,10 @@ document.addEventListener('DOMContentLoaded', function () {
 
             document.getElementById('edit_id').value = id;
             document.getElementById('edit_name').value = name;
-            document.getElementById('edit_slug').value = slug;
+            const slugDisplay = document.getElementById('edit_slug_display');
+            if (slugDisplay) {
+                slugDisplay.value = slug;
+            }
             document.getElementById('edit_parent_id').value = parentId && parentId !== '0' ? parentId : '';
             document.getElementById('edit_description').value = desc;
             document.getElementById('edit_sort_order').value = sort;

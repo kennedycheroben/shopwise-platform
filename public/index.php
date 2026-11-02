@@ -155,6 +155,12 @@ $router->get('/category/{slug}', function (array $params) use ($cartService, $ca
     $category = $catalogService->getCategoryBySlug($slug);
 
     if (!$category) {
+        $targetSlug = \App\Services\CategoryService::findCurrentSlugForHistorical($slug);
+        if ($targetSlug && $targetSlug !== $slug) {
+            redirect('category/' . $targetSlug, 301);
+            return;
+        }
+
         http_response_code(404);
         $cart = $cartService->getCartDetails();
         include dirname(__DIR__) . '/app/views/store/404.php';

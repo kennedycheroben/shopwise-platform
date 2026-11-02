@@ -71,6 +71,9 @@ import_sql "database/demo_orders.sql"
 # 5. Apply any pending database migrations
 for mig in database/migrations/*.sql; do
     if [ -f "$mig" ]; then
+        if [[ "$mig" =~ _down\.sql$ ]]; then
+            continue
+        fi
         import_sql "$mig" 2>/dev/null || true
     fi
 done

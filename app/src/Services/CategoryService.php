@@ -103,7 +103,8 @@ class CategoryService
     }
 
     /**
-     * Create category
+     * Create category with automatic system-generated unique slug.
+     * Custom slugs in $data are ignored to guarantee SEO consistency and prevent tampering.
      */
     public static function create(array $data, int $actorId, string $ip): int
     {
@@ -112,14 +113,9 @@ class CategoryService
             throw new InvalidArgumentException("Category name is required.");
         }
 
-        $slug = trim($data['slug'] ?? '');
-        if ($slug === '') {
-            $slug = unique_slug('categories', $name);
-        } else {
-            $slug = slugify($slug);
-            if (self::findBySlug($slug)) {
-                throw new InvalidArgumentException("Category slug '{$slug}' is already in use.");
-            }
+        $baseSlug = slugify($name);
+        if ($baseSlug === '' || ($baseSlug === 'item' && preg_match('/[a-z0-9]/i', $name) === 0)) {
+            throw new InvalidArgumentException("Category name must contain alphanumeric characters to generate a valid URL slug.");
         }
 
         $parentId = !empty($data['parent_id']) ? (int)$data['parent_id'] : null;
@@ -133,26 +129,48 @@ class CategoryService
         $description = trim($data['description'] ?? '');
         $image = !empty($data['image']) ? trim($data['image']) : null;
         $sortOrder = (int)($data['sort_order'] ?? 0);
-        $isActive = !empty($data['is_active']) ? 1 : 0;
+        $isActive = isset($data['is_active']) ? (!empty($data['is_active']) ? 1 : 0) : 1;
 
         $pdo = Database::getInstance();
-        $stmt = $pdo->prepare("INSERT INTO categories (parent_id, name, slug, description, image, sort_order, is_active)
-                               VALUES (:parent_id, :name, :slug, :description, :image, :sort_order, :is_active)");
-        $stmt->execute([
-            ':parent_id'   => $parentId,
-            ':name'        => $name,
-            ':slug'        => $slug,
-            ':description' => $description !== '' ? $description : null,
-            ':image'       => $image,
-            ':sort_order'  => $sortOrder,
-            ':is_active'   => $isActive,
-        ]);
+        $maxAttempts = 5;
+        $id = null;
+        $finalSlug = null;
 
-        $id = (int)$pdo->lastInsertId();
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            $slug = unique_slug('categories', $name);
+            try {
+                $stmt = $pdo->prepare("INSERT INTO categories (parent_id, name, slug, description, image, sort_order, is_active)
+                                       VALUES (:parent_id, :name, :slug, :description, :image, :sort_order, :is_active)");
+                $stmt->execute([
+                    ':parent_id'   => $parentId,
+                    ':name'        => $name,
+                    ':slug'        => $slug,
+                    ':description' => $description !== '' ? $description : null,
+                    ':image'       => $image,
+                    ':sort_order'  => $sortOrder,
+                    ':is_active'   => $isActive,
+                ]);
+
+                $id = (int)$pdo->lastInsertId();
+                $finalSlug = $slug;
+                break;
+            } catch (\PDOException $e) {
+                $isDuplicate = ($e->getCode() === '23000' || ($e->errorInfo[1] ?? 0) === 1062)
+                    && (str_contains($e->getMessage(), 'uq_categories_slug') || str_contains($e->getMessage(), 'slug'));
+                if ($isDuplicate) {
+                    if ($attempt === $maxAttempts) {
+                        throw new \RuntimeException("Unable to generate a unique category slug after {$maxAttempts} concurrent attempts. Please try again.", 0, $e);
+                    }
+                    usleep(random_int(10000, 40000));
+                    continue;
+                }
+                throw $e;
+            }
+        }
 
         AuditLogger::log($actorId, 'create', 'category', $id, [
             'name'      => $name,
-            'slug'      => $slug,
+            'slug'      => $finalSlug,
             'parent_id' => $parentId,
             'is_active' => $isActive,
         ], $ip);
@@ -161,7 +179,9 @@ class CategoryService
     }
 
     /**
-     * Update category
+     * Update category attributes.
+     * Category slugs are permanently immutable: name, description, parent, sort order,
+     * and status modifications do not alter the existing slug. Any submitted 'slug' is ignored.
      */
     public static function update(int $id, array $data, int $actorId, string $ip): bool
     {
@@ -175,15 +195,8 @@ class CategoryService
             throw new InvalidArgumentException("Category name cannot be empty.");
         }
 
-        $slug = trim($data['slug'] ?? $category['slug']);
-        if ($slug === '') {
-            $slug = unique_slug('categories', $name, $id);
-        } else {
-            $slug = slugify($slug);
-            if (self::findBySlug($slug, $id)) {
-                throw new InvalidArgumentException("Category slug '{$slug}' is already in use by another category.");
-            }
-        }
+        // Slug is strictly immutable during normal category updates
+        $slug = $category['slug'];
 
         $parentId = array_key_exists('parent_id', $data)
             ? (!empty($data['parent_id']) ? (int)$data['parent_id'] : null)
@@ -212,7 +225,6 @@ class CategoryService
         $stmt = $pdo->prepare("UPDATE categories 
                                SET parent_id = :parent_id,
                                    name = :name,
-                                   slug = :slug,
                                    description = :description,
                                    image = :image,
                                    sort_order = :sort_order,
@@ -221,7 +233,6 @@ class CategoryService
         $stmt->execute([
             ':parent_id'   => $parentId,
             ':name'        => $name,
-            ':slug'        => $slug,
             ':description' => $description !== '' ? $description : null,
             ':image'       => $image,
             ':sort_order'  => $sortOrder,
@@ -238,13 +249,114 @@ class CategoryService
             ],
             'after'  => [
                 'name'      => $name,
-                'slug'      => $slug,
+                'slug'      => $category['slug'],
                 'parent_id' => $parentId,
                 'is_active' => $isActive,
             ],
         ], $ip);
 
         return true;
+    }
+
+    /**
+     * Explicitly authorized, system-managed slug migration.
+     * Only to be invoked by authorized administrative maintenance operations.
+     */
+    public static function migrateSlug(int $id, string $newSlugCandidate, int $actorId, string $ip): string
+    {
+        $category = self::find($id);
+        if (!$category) {
+            throw new DomainException("Category not found.");
+        }
+
+        $oldSlug = $category['slug'];
+        $newSlug = slugify($newSlugCandidate);
+
+        if ($newSlug === '' || ($newSlug === 'item' && preg_match('/[a-z0-9]/i', $newSlugCandidate) === 0)) {
+            throw new InvalidArgumentException("New slug must contain alphanumeric characters.");
+        }
+
+        if ($newSlug === $oldSlug) {
+            return $oldSlug;
+        }
+
+        if (self::findBySlug($newSlug, $id)) {
+            throw new InvalidArgumentException("Category slug '{$newSlug}' is already in use.");
+        }
+
+        $pdo = Database::getInstance();
+        $stmt = $pdo->prepare("UPDATE categories SET slug = :slug WHERE id = :id");
+        $stmt->execute([':slug' => $newSlug, ':id' => $id]);
+
+        // Record historical redirect
+        self::recordHistoricalSlug($oldSlug, $newSlug);
+
+        AuditLogger::log($actorId, 'migrate_slug', 'category', $id, [
+            'old_slug' => $oldSlug,
+            'new_slug' => $newSlug,
+        ], $ip);
+
+        return $newSlug;
+    }
+
+    /**
+     * Record a historical slug redirect, updating chains and avoiding cycles.
+     */
+    public static function recordHistoricalSlug(string $oldSlug, string $newSlug): void
+    {
+        if ($oldSlug === '' || $newSlug === '' || $oldSlug === $newSlug) {
+            return;
+        }
+
+        $raw = setting('category_slug_redirects', '[]');
+        $redirects = is_array($raw) ? $raw : (json_decode((string)$raw, true) ?: []);
+
+        // Flatten any existing redirects pointing to $oldSlug to now point directly to $newSlug
+        foreach ($redirects as $source => $target) {
+            if ($target === $oldSlug) {
+                $redirects[$source] = $newSlug;
+            }
+        }
+
+        // Map $oldSlug to $newSlug
+        $redirects[$oldSlug] = $newSlug;
+
+        // Prevent loop if $newSlug had previously pointed somewhere
+        unset($redirects[$newSlug]);
+
+        SettingService::set('category_slug_redirects', $redirects, 'json');
+    }
+
+    /**
+     * Find active category slug for a historical slug (if migrated).
+     * Prevents loops and ensures target exists and is active.
+     */
+    public static function findCurrentSlugForHistorical(string $slug): ?string
+    {
+        $raw = setting('category_slug_redirects', '[]');
+        $redirects = is_array($raw) ? $raw : (json_decode((string)$raw, true) ?: []);
+
+        if (empty($redirects[$slug])) {
+            return null;
+        }
+
+        $visited = [$slug];
+        $current = $redirects[$slug];
+
+        while (isset($redirects[$current])) {
+            if (in_array($current, $visited, true)) {
+                return null; // Loop detected
+            }
+            $visited[] = $current;
+            $current = $redirects[$current];
+        }
+
+        $cat = self::findBySlug($current);
+        if ($cat && !empty($cat['is_active'])) {
+            return $current;
+        }
+
+        return null;
     }
 
     /**

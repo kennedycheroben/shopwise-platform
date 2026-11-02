@@ -11,9 +11,7 @@ The ShopWise Platform utilizes front-end UI templates and third-party libraries 
 - **Usage**: Administrative dashboard shell, forms, UI components, and table layouts located in `public/admin/` and `app/views/admin/`.
 - **Attribution Requirement**: The backlink / credit link to BootstrapMade must remain visible in the administrative footer (`app/views/admin/footer.php`):
   ```html
-  <div class="credits">
-    Designed by <a href="https://bootstrapmade.com/">BootstrapMade</a>
-  </div>
+ 
   ```
 
 ---
