@@ -412,10 +412,44 @@ final class GoogleAuthService
                 return [false, 'Your account is currently inactive or suspended. Please contact support.'];
             }
 
-            // Update last login
-            $pdo->prepare("UPDATE users SET last_login_at = NOW() WHERE id = :id")->execute([':id' => $existingByGoogle['id']]);
+            // Update email_verified_at if Google claims email is verified and local account was unverified
+            if (!empty($claims['email_verified']) && empty($existingByGoogle['email_verified_at'])) {
+                $pdo->prepare("
+                    UPDATE users
+                    SET email_verified_at = NOW(),
+                        avatar_url = COALESCE(avatar_url, :avatar),
+                        last_login_at = NOW(),
+                        updated_at = NOW()
+                    WHERE id = :id
+                ")->execute([
+                    ':avatar' => $avatarUrl,
+                    ':id'     => $existingByGoogle['id'],
+                ]);
+                $existingByGoogle['email_verified_at'] = date('Y-m-d H:i:s');
+            } else {
+                $pdo->prepare("
+                    UPDATE users
+                    SET avatar_url = COALESCE(avatar_url, :avatar),
+                        last_login_at = NOW(),
+                        updated_at = NOW()
+                    WHERE id = :id
+                ")->execute([
+                    ':avatar' => $avatarUrl,
+                    ':id'     => $existingByGoogle['id'],
+                ]);
+            }
 
-            // Establish customer session
+            // Re-fetch clean user row
+            $stmt = $pdo->prepare("
+                SELECT id, role, first_name, last_name, email, phone, status, google_id, avatar_url, email_verified_at, created_at
+                FROM users
+                WHERE id = :id
+                LIMIT 1
+            ");
+            $stmt->execute([':id' => $existingByGoogle['id']]);
+            $existingByGoogle = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            // Establish customer session with ID regeneration
             if (session_status() === PHP_SESSION_ACTIVE) {
                 session_regenerate_id(true);
             }
@@ -433,15 +467,14 @@ final class GoogleAuthService
                 'email' => $email,
             ], $ip);
 
-            return [true, 'Welcome back!', $existingByGoogle, $savedSession['return_url'] ?? '/account'];
+            $returnUrl = $savedSession['return_url'] ?? '/account';
+            return [true, ['message' => 'Welcome back!', 'user' => $existingByGoogle, 'return_url' => $returnUrl], $existingByGoogle, $returnUrl];
         }
 
-        // 2. Google sign-in is restricted to existing, verified ShopWise customer accounts.
-        // A Google identity may be linked by email only after the ShopWise account exists
-        // and its email has already been verified through the normal registration flow.
+        // 2. Check if an account already exists with matching email (Identity Linking)
         $stmt = $pdo->prepare("
             SELECT id, role, first_name, last_name, email, phone, status,
-                   google_id, avatar_url, email_verified_at
+                   google_id, avatar_url, email_verified_at, password_hash
             FROM users
             WHERE email = :email
             LIMIT 1
@@ -449,98 +482,165 @@ final class GoogleAuthService
         $stmt->execute([':email' => $email]);
         $existingByEmail = $stmt->fetch(PDO::FETCH_ASSOC);
 
-        if (!$existingByEmail) {
-            return [false, 'No existing ShopWise account was found for this Google email. Please register with ShopWise first, verify your email, then sign in with Google.'];
-        }
-
-        if ($existingByEmail['role'] !== 'customer') {
-            return [false, 'Administrative and staff accounts cannot sign in through the storefront customer portal.'];
-        }
-
-        if ($existingByEmail['status'] !== 'active') {
-            return [false, 'Your account is currently inactive or suspended. Please contact support.'];
-        }
-
-        if (empty($existingByEmail['email_verified_at'])) {
-            return [false, 'Please verify your ShopWise email address using the registration email before signing in with Google.'];
-        }
-
-        if (!empty($existingByEmail['google_id']) && !hash_equals((string)$existingByEmail['google_id'], $googleId)) {
-            return [false, 'A different Google account is already linked to this ShopWise account. Please use the linked Google account or contact support.'];
-        }
-
-        $userId = (int)$existingByEmail['id'];
-        try {
-            $pdo->beginTransaction();
-            // Lock and re-check the account to avoid linking after a concurrent account change.
-            $lockStmt = $pdo->prepare("
-                SELECT role, status, email_verified_at, google_id
-                FROM users
-                WHERE id = :id
-                LIMIT 1
-                FOR UPDATE
-            ");
-            $lockStmt->execute([':id' => $userId]);
-            $lockedUser = $lockStmt->fetch(PDO::FETCH_ASSOC);
-
-            if (!$lockedUser ||
-                $lockedUser['role'] !== 'customer' ||
-                $lockedUser['status'] !== 'active' ||
-                empty($lockedUser['email_verified_at']) ||
-                (!empty($lockedUser['google_id']) && !hash_equals((string)$lockedUser['google_id'], $googleId))) {
-                $pdo->rollBack();
-                return [false, 'This ShopWise account is not eligible for Google sign-in. Please use your existing sign-in method or contact support.'];
+        if ($existingByEmail) {
+            if ($existingByEmail['role'] !== 'customer') {
+                return [false, 'Administrative and staff accounts cannot sign in through the storefront customer portal.'];
+            }
+            if ($existingByEmail['status'] !== 'active') {
+                return [false, 'Your account is currently inactive or suspended. Please contact support.'];
+            }
+            if (!empty($existingByEmail['google_id']) && !hash_equals((string)$existingByEmail['google_id'], $googleId)) {
+                return [false, 'A different Google account is already linked to this ShopWise account. Please use the linked Google account or contact support.'];
             }
 
-            $pdo->prepare("
-                UPDATE users
-                SET google_id = COALESCE(google_id, :gid),
-                    avatar_url = COALESCE(avatar_url, :avatar),
-                    last_login_at = NOW(),
-                    updated_at = NOW()
-                WHERE id = :id
-            ")->execute([
-                ':gid' => $googleId,
-                ':avatar' => $avatarUrl,
-                ':id' => $userId,
+            // Validate Google's verified-email claim before treating the email as verified or linking
+            if (empty($claims['email_verified'])) {
+                return [false, 'Google email address is not verified. Please verify your email with Google first.'];
+            }
+
+            $userId = (int)$existingByEmail['id'];
+            try {
+                $pdo->beginTransaction();
+                $lockStmt = $pdo->prepare("
+                    SELECT role, status, email_verified_at, google_id
+                    FROM users
+                    WHERE id = :id
+                    LIMIT 1
+                    FOR UPDATE
+                ");
+                $lockStmt->execute([':id' => $userId]);
+                $lockedUser = $lockStmt->fetch(PDO::FETCH_ASSOC);
+
+                if (!$lockedUser ||
+                    $lockedUser['role'] !== 'customer' ||
+                    $lockedUser['status'] !== 'active' ||
+                    (!empty($lockedUser['google_id']) && !hash_equals((string)$lockedUser['google_id'], $googleId))) {
+                    $pdo->rollBack();
+                    return [false, 'This ShopWise account is not eligible for Google sign-in. Please use your existing sign-in method or contact support.'];
+                }
+
+                $pdo->prepare("
+                    UPDATE users
+                    SET google_id = :gid,
+                        avatar_url = COALESCE(avatar_url, :avatar),
+                        email_verified_at = COALESCE(email_verified_at, NOW()),
+                        last_login_at = NOW(),
+                        updated_at = NOW()
+                    WHERE id = :id
+                ")->execute([
+                    ':gid'    => $googleId,
+                    ':avatar' => $avatarUrl,
+                    ':id'     => $userId,
+                ]);
+                $pdo->commit();
+            } catch (\Throwable $e) {
+                if ($pdo->inTransaction()) {
+                    $pdo->rollBack();
+                }
+                return [false, 'Unable to link this Google account. Please try again or contact support.'];
+            }
+
+            $stmt = $pdo->prepare("
+                SELECT id, role, first_name, last_name, email, phone, status,
+                       google_id, avatar_url, email_verified_at, created_at
+                FROM users
+                WHERE id = :id AND role = 'customer' AND status = 'active'
+                LIMIT 1
+            ");
+            $stmt->execute([':id' => $userId]);
+            $linkedUser = $stmt->fetch(PDO::FETCH_ASSOC);
+            if (!$linkedUser) {
+                return [false, 'Unable to load your ShopWise account. Please try again.'];
+            }
+
+            if (session_status() === PHP_SESSION_ACTIVE) {
+                session_regenerate_id(true);
+            }
+            $linkedUser['auth_time'] = time();
+            $_SESSION[CustomerAuthService::SESSION_KEY] = $linkedUser;
+
+            $guestToken = $_COOKIE[CartService::COOKIE_NAME] ?? null;
+            if (!empty($guestToken) && is_string($guestToken)) {
+                $cartService = new CartService($pdo);
+                $cartService->mergeGuestCart($userId, $guestToken);
+            }
+
+            AuditLogger::log($userId, 'customer_linked_google', 'user', $userId, [
+                'email' => $email,
+            ], $ip);
+
+            $returnUrl = $savedSession['return_url'] ?? '/account';
+            return [true, ['message' => 'Welcome back!', 'user' => $linkedUser, 'return_url' => $returnUrl], $linkedUser, $returnUrl];
+        }
+
+        // 3. New customer account creation (Direct Google Registration)
+        $cleanFirst = preg_replace('/[^\p{L} \'\-]/u', '', $firstName);
+        $cleanFirst = trim(preg_replace('/\s+/', ' ', $cleanFirst));
+        if ($cleanFirst === '') {
+            $cleanFirst = 'Google';
+        }
+        $cleanLast = preg_replace('/[^\p{L} \'\-]/u', '', $lastName);
+        $cleanLast = trim(preg_replace('/\s+/', ' ', $cleanLast));
+        if ($cleanLast === '') {
+            $cleanLast = 'Customer';
+        }
+
+        $emailVerifiedAt = !empty($claims['email_verified']) ? date('Y-m-d H:i:s') : null;
+
+        try {
+            $pdo->beginTransaction();
+
+            $insertStmt = $pdo->prepare("
+                INSERT INTO users (role, first_name, last_name, email, google_id, avatar_url, status, email_verified_at, last_login_at, created_at, updated_at)
+                VALUES ('customer', :first, :last, :email, :gid, :avatar, 'active', :verified_at, NOW(), NOW(), NOW())
+            ");
+            $insertStmt->execute([
+                ':first'       => mb_substr($cleanFirst, 0, 100),
+                ':last'        => mb_substr($cleanLast, 0, 100),
+                ':email'       => $email,
+                ':gid'         => $googleId,
+                ':avatar'      => $avatarUrl,
+                ':verified_at' => $emailVerifiedAt,
             ]);
+            $newId = (int)$pdo->lastInsertId();
+
             $pdo->commit();
         } catch (\Throwable $e) {
             if ($pdo->inTransaction()) {
                 $pdo->rollBack();
             }
-            return [false, 'Unable to link this Google account. Please try again or contact support.'];
+            return [false, 'Failed to create ShopWise account with Google: ' . $e->getMessage()];
         }
 
         $stmt = $pdo->prepare("
-            SELECT id, role, first_name, last_name, email, phone, status,
-                   google_id, avatar_url, email_verified_at, created_at
+            SELECT id, role, first_name, last_name, email, phone, status, google_id, avatar_url, email_verified_at, created_at
             FROM users
             WHERE id = :id AND role = 'customer' AND status = 'active'
             LIMIT 1
         ");
-        $stmt->execute([':id' => $userId]);
-        $linkedUser = $stmt->fetch(PDO::FETCH_ASSOC);
-        if (!$linkedUser) {
-            return [false, 'Unable to load your ShopWise account. Please try again.'];
+        $stmt->execute([':id' => $newId]);
+        $newUser = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$newUser) {
+            return [false, 'Unable to initialize your new ShopWise account. Please try again.'];
         }
 
         if (session_status() === PHP_SESSION_ACTIVE) {
             session_regenerate_id(true);
         }
-        $linkedUser['auth_time'] = time();
-        $_SESSION[CustomerAuthService::SESSION_KEY] = $linkedUser;
+        $newUser['auth_time'] = time();
+        $_SESSION[CustomerAuthService::SESSION_KEY] = $newUser;
 
         $guestToken = $_COOKIE[CartService::COOKIE_NAME] ?? null;
         if (!empty($guestToken) && is_string($guestToken)) {
             $cartService = new CartService($pdo);
-            $cartService->mergeGuestCart($userId, $guestToken);
+            $cartService->mergeGuestCart($newId, $guestToken);
         }
 
-        AuditLogger::log($userId, 'customer_login_google', 'user', $userId, [
+        AuditLogger::log($newId, 'customer_registered_google', 'user', $newId, [
             'email' => $email,
         ], $ip);
 
-        return [true, 'Welcome back!', $linkedUser, $savedSession['return_url'] ?? '/account'];
+        $returnUrl = $savedSession['return_url'] ?? '/account';
+        return [true, ['message' => 'Account created successfully with Google.', 'user' => $newUser, 'return_url' => $returnUrl], $newUser, $returnUrl];
     }
 }

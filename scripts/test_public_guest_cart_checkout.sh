@@ -428,18 +428,20 @@ assert_m_true "login_quantities_merged" "Cart merge accurately sums quantities (
 assert_m_true "guest_cart_purged" "Guest cart record purged after merging to prevent leakage"
 
 # ------------------------------------------------------------------------------
-# 5. GOOGLE SIGN-IN POLICY
+# 5. GOOGLE SIGN-IN & REGISTRATION POLICY
 # ------------------------------------------------------------------------------
-info "5. GOOGLE SIGN-IN POLICY (Existing Verified Accounts Only)"
+info "5. GOOGLE SIGN-IN & REGISTRATION POLICY (Direct Registration, Linking & Restrictions)"
 
 GOOGLE_RUNNER=$(cat <<'EOF'
 require 'app/bootstrap.php';
 use App\Database\Database;
 use App\Services\GoogleAuthService;
 use App\Services\CustomerAuthService;
+use App\Services\CartService;
 
 $pdo = Database::getInstance();
-$runId = $argv[1];
+$variantId = (int)$argv[1];
+$runId = $argv[2];
 $ip = '127.0.0.1';
 
 $res = [];
@@ -487,116 +489,143 @@ $stubClient = new class($mockJwk) implements \App\Services\HttpClientInterface {
 };
 GoogleAuthService::setHttpClient($stubClient);
 
-// 1. Unknown Google account cannot register automatically
-$unknownEmail = "google_unknown_{$runId}@test.local";
-$unknownPayload = $basePayload;
-$unknownPayload['email'] = $unknownEmail;
-$unknownPayload['sub'] = "google_sub_unknown_{$runId}";
-$stubClient->setIdToken($signJwt($unknownPayload, $rsa, $kid));
+// 1. Direct registration of a new customer with active guest cart
+unset($_SESSION[CustomerAuthService::SESSION_KEY]);
+$newGuestToken = bin2hex(random_bytes(32));
+$_COOKIE[CartService::COOKIE_NAME] = $newGuestToken;
+$guestCartSvc = new CartService($pdo);
+$guestCartSvc->addItem($variantId, 2);
+
+$newGoogleEmail = "google_new_{$runId}@test.local";
+$newPayload = $basePayload;
+$newPayload['email'] = $newGoogleEmail;
+$newPayload['sub'] = "google_sub_new_{$runId}";
+$newPayload['given_name'] = "Grace";
+$newPayload['family_name'] = "Wanjiku";
+$newPayload['picture'] = "https://lh3.googleusercontent.com/photo_{$runId}.jpg";
+$stubClient->setIdToken($signJwt($newPayload, $rsa, $kid));
 
 $session1 = [
     'state' => 'state1_' . $runId,
-    'nonce' => $unknownPayload['nonce'],
+    'nonce' => $newPayload['nonce'],
     'code_verifier' => 'verifier1',
-    'return_url' => '/account',
+    'return_url' => '/checkout',
     'created_at' => time(),
     'expires_at' => time() + 600,
 ];
 $_SESSION[GoogleAuthService::STATE_SESSION_KEY] = $session1;
-[$ok1, $msg1] = GoogleAuthService::handleCallback(['state' => $session1['state'], 'code' => 'mock-code'], $ip);
-$res['unknown_google_rejected'] = (!$ok1);
-$res['unknown_message_explains_reg'] = str_contains($msg1, 'register');
+[$ok1, $res1, $user1, $returnUrl1] = GoogleAuthService::handleCallback(['state' => $session1['state'], 'code' => 'mock-code'], $ip);
+$res['new_customer_registered'] = $ok1;
+$res['new_customer_return_url_preserved'] = ($returnUrl1 === '/checkout');
 
-$stmtCheckUnknown = $pdo->prepare("SELECT COUNT(*) FROM users WHERE email = :e");
-$stmtCheckUnknown->execute([':e' => $unknownEmail]);
-$res['unknown_user_not_created'] = ((int)$stmtCheckUnknown->fetchColumn() === 0);
+$stmtNew = $pdo->prepare("SELECT * FROM users WHERE email = :e");
+$stmtNew->execute([':e' => $newGoogleEmail]);
+$newRow = $stmtNew->fetch(PDO::FETCH_ASSOC);
+$newCustId = (int)($newRow['id'] ?? 0);
 
-// 2. Unverified existing customer account is rejected; password & tokens untouched
-$unverEmail = "google_unver_{$runId}@test.local";
-$unverPwd = "UnverPassword_{$runId}!";
-$pdo->prepare("
-    INSERT INTO users (role, first_name, last_name, email, password_hash, email_verified_at, status, created_at, updated_at)
-    VALUES ('customer', 'Unverified', 'Customer', :e, :p, NULL, 'active', NOW(), NOW())
-")->execute([':e' => $unverEmail, ':p' => password_hash($unverPwd, PASSWORD_DEFAULT)]);
-$unverUserId = (int)$pdo->lastInsertId();
+$res['new_customer_row_created'] = ($newCustId > 0);
+$res['new_customer_role_is_customer'] = (($newRow['role'] ?? '') === 'customer');
+$res['new_customer_status_is_active'] = (($newRow['status'] ?? '') === 'active');
+$res['new_customer_email_verified'] = !empty($newRow['email_verified_at']);
+$res['new_customer_google_id_stored'] = (($newRow['google_id'] ?? '') === $newPayload['sub']);
+$res['new_customer_password_is_null'] = ($newRow['password_hash'] === null);
 
-$pdo->prepare("INSERT INTO email_verifications (user_id, token_hash, expires_at, created_at) VALUES (?, 'tok_unver_hash', DATE_ADD(NOW(), INTERVAL 1 DAY), NOW())")->execute([$unverUserId]);
+// Verify guest cart was preserved and attached to the new customer
+$stmtCart = $pdo->prepare("SELECT id FROM carts WHERE user_id = :uid LIMIT 1");
+$stmtCart->execute([':uid' => $newCustId]);
+$newCartId = (int)$stmtCart->fetchColumn();
+$stmtCartItems = $pdo->prepare("SELECT SUM(quantity) FROM cart_items WHERE cart_id = :cid");
+$stmtCartItems->execute([':cid' => $newCartId]);
+$res['new_customer_cart_preserved'] = ((int)$stmtCartItems->fetchColumn() === 2);
 
-$unverPayload = $basePayload;
-$unverPayload['email'] = $unverEmail;
-$unverPayload['sub'] = "google_sub_unver_{$runId}";
-$stubClient->setIdToken($signJwt($unverPayload, $rsa, $kid));
-
+// 2. Duplicate Account Prevention: repeat login with the same Google ID logs in, does NOT duplicate row
+$stubClient->setIdToken($signJwt($newPayload, $rsa, $kid));
 $session2 = [
     'state' => 'state2_' . $runId,
-    'nonce' => $unverPayload['nonce'],
+    'nonce' => $newPayload['nonce'],
     'code_verifier' => 'verifier2',
-    'return_url' => '/account',
+    'return_url' => '/checkout',
     'created_at' => time(),
     'expires_at' => time() + 600,
 ];
 $_SESSION[GoogleAuthService::STATE_SESSION_KEY] = $session2;
-[$ok2, $msg2] = GoogleAuthService::handleCallback(['state' => $session2['state'], 'code' => 'mock-code'], $ip);
-$res['unverified_rejected'] = (!$ok2);
-$res['unverified_message_mentions_verification'] = str_contains(strtolower($msg2), 'verify');
+[$ok2, $res2, $user2, $returnUrl2] = GoogleAuthService::handleCallback(['state' => $session2['state'], 'code' => 'mock-code'], $ip);
+$res['returning_google_user_signs_in'] = $ok2;
 
-$stmtUnverUser = $pdo->prepare("SELECT password_hash, email_verified_at, google_id FROM users WHERE id = :id");
-$stmtUnverUser->execute([':id' => $unverUserId]);
-$unverRow = $stmtUnverUser->fetch(PDO::FETCH_ASSOC);
-$res['unverified_pwd_intact'] = password_verify($unverPwd, $unverRow['password_hash'] ?? '');
-$res['unverified_no_google_link'] = empty($unverRow['google_id']);
+$stmtCountNew = $pdo->prepare("SELECT COUNT(*) FROM users WHERE email = :e");
+$stmtCountNew->execute([':e' => $newGoogleEmail]);
+$res['duplicate_account_prevented'] = ((int)$stmtCountNew->fetchColumn() === 1);
 
-// 3. Existing verified customer account links and signs in
-$verifiedEmail = "google_verif_{$runId}@test.local";
-$verifiedPwd = "VerifiedPassword_{$runId}!";
+// 3. Existing account linking without creating duplicate account
+unset($_SESSION[CustomerAuthService::SESSION_KEY]);
+$linkEmail = "existing_pwd_{$runId}@test.local";
+$linkPwd = "ExistingPass2026_{$runId}!";
+$linkPwdHash = password_hash($linkPwd, PASSWORD_DEFAULT);
 $pdo->prepare("
     INSERT INTO users (role, first_name, last_name, email, password_hash, email_verified_at, status, created_at, updated_at)
-    VALUES ('customer', 'Verified', 'Customer', :e, :p, NOW(), 'active', NOW(), NOW())
-")->execute([':e' => $verifiedEmail, ':p' => password_hash($verifiedPwd, PASSWORD_DEFAULT)]);
-$verifiedUserId = (int)$pdo->lastInsertId();
+    VALUES ('customer', 'David', 'Kimani', :e, :p, NULL, 'active', NOW(), NOW())
+")->execute([':e' => $linkEmail, ':p' => $linkPwdHash]);
+$linkUserId = (int)$pdo->lastInsertId();
 
-$verifPayload = $basePayload;
-$verifPayload['email'] = $verifiedEmail;
-$verifPayload['sub'] = "google_sub_verified_{$runId}";
-$stubClient->setIdToken($signJwt($verifPayload, $rsa, $kid));
+$linkPayload = $basePayload;
+$linkPayload['email'] = $linkEmail;
+$linkPayload['sub'] = "google_sub_link_{$runId}";
+$stubClient->setIdToken($signJwt($linkPayload, $rsa, $kid));
 
 $session3 = [
     'state' => 'state3_' . $runId,
-    'nonce' => $verifPayload['nonce'],
+    'nonce' => $linkPayload['nonce'],
     'code_verifier' => 'verifier3',
     'return_url' => '/checkout',
     'created_at' => time(),
     'expires_at' => time() + 600,
 ];
 $_SESSION[GoogleAuthService::STATE_SESSION_KEY] = $session3;
-[$ok3, $msg3, $user3, $returnUrl3] = GoogleAuthService::handleCallback(['state' => $session3['state'], 'code' => 'mock-code'], $ip);
-$res['verified_account_links_ok'] = $ok3;
-$res['verified_return_url_preserved'] = ($returnUrl3 === '/checkout');
+[$ok3, $res3, $user3, $returnUrl3] = GoogleAuthService::handleCallback(['state' => $session3['state'], 'code' => 'mock-code'], $ip);
+$res['existing_account_linked'] = $ok3;
 
-$stmtVerUser = $pdo->prepare("SELECT google_id FROM users WHERE id = :id");
-$stmtVerUser->execute([':id' => $verifiedUserId]);
-$res['google_id_linked'] = (($stmtVerUser->fetchColumn() ?? '') === $verifPayload['sub']);
+$stmtLinkUser = $pdo->prepare("SELECT * FROM users WHERE id = :id");
+$stmtLinkUser->execute([':id' => $linkUserId]);
+$linkedRow = $stmtLinkUser->fetch(PDO::FETCH_ASSOC);
 
-// 4. Subsequent sign-in with already linked Google account
-$stubClient->setIdToken($signJwt($verifPayload, $rsa, $kid));
+$res['existing_pwd_preserved'] = password_verify($linkPwd, $linkedRow['password_hash'] ?? '');
+$res['existing_google_id_linked'] = (($linkedRow['google_id'] ?? '') === $linkPayload['sub']);
+$res['existing_email_now_verified'] = !empty($linkedRow['email_verified_at']);
+
+$stmtCountLink = $pdo->prepare("SELECT COUNT(*) FROM users WHERE email = :e");
+$stmtCountLink->execute([':e' => $linkEmail]);
+$res['link_no_duplicate_row'] = ((int)$stmtCountLink->fetchColumn() === 1);
+
+// 4. Ineligible accounts rejected: blocked/suspended user
+$blockedEmail = "blocked_{$runId}@test.local";
+$pdo->prepare("
+    INSERT INTO users (role, first_name, last_name, email, status, created_at, updated_at)
+    VALUES ('customer', 'Blocked', 'User', :e, 'blocked', NOW(), NOW())
+")->execute([':e' => $blockedEmail]);
+$blockedUserId = (int)$pdo->lastInsertId();
+
+$blockedPayload = $basePayload;
+$blockedPayload['email'] = $blockedEmail;
+$blockedPayload['sub'] = "google_sub_blocked_{$runId}";
+$stubClient->setIdToken($signJwt($blockedPayload, $rsa, $kid));
+
 $session4 = [
     'state' => 'state4_' . $runId,
-    'nonce' => $verifPayload['nonce'],
+    'nonce' => $blockedPayload['nonce'],
     'code_verifier' => 'verifier4',
     'return_url' => '/checkout',
     'created_at' => time(),
     'expires_at' => time() + 600,
 ];
 $_SESSION[GoogleAuthService::STATE_SESSION_KEY] = $session4;
-[$ok4, $data4] = GoogleAuthService::handleCallback(['state' => $session4['state'], 'code' => 'mock-code'], $ip);
-$res['linked_account_signs_in_ok'] = $ok4;
-$res['session_customer_id_matches'] = ((int)($_SESSION[CustomerAuthService::SESSION_KEY]['id'] ?? 0) === $verifiedUserId);
+[$ok4, $msg4] = GoogleAuthService::handleCallback(['state' => $session4['state'], 'code' => 'mock-code'], $ip);
+$res['blocked_user_rejected'] = (!$ok4);
 
-// 5. Staff and admin accounts cannot authenticate through customer Google sign-in
-$adminEmail = "google_admin_{$runId}@test.local";
+// 5. Ineligible accounts rejected: staff/admin role cannot sign in via customer Google OAuth
+$adminEmail = "admin_oauth_{$runId}@test.local";
 $pdo->prepare("
-    INSERT INTO users (role, first_name, last_name, email, password_hash, email_verified_at, status, created_at, updated_at)
-    VALUES ('admin', 'System', 'Admin', :e, 'mockpwd', NOW(), 'active', NOW(), NOW())
+    INSERT INTO users (role, first_name, last_name, email, password_hash, status, created_at, updated_at)
+    VALUES ('admin', 'System', 'Admin', :e, 'adminpwd', 'active', NOW(), NOW())
 ")->execute([':e' => $adminEmail]);
 $adminUserId = (int)$pdo->lastInsertId();
 
@@ -617,17 +646,55 @@ $_SESSION[GoogleAuthService::STATE_SESSION_KEY] = $session5;
 [$ok5, $msg5] = GoogleAuthService::handleCallback(['state' => $session5['state'], 'code' => 'mock-code'], $ip);
 $res['admin_role_rejected'] = (!$ok5);
 
+// 6. Conflicting Google ID linking attempt rejected
+$conflictPayload = $basePayload;
+$conflictPayload['email'] = $linkEmail; // matches existing David Kimani
+$conflictPayload['sub'] = "google_sub_different_{$runId}"; // but different google_id
+$stubClient->setIdToken($signJwt($conflictPayload, $rsa, $kid));
+
+$session6 = [
+    'state' => 'state6_' . $runId,
+    'nonce' => $conflictPayload['nonce'],
+    'code_verifier' => 'verifier6',
+    'return_url' => '/checkout',
+    'created_at' => time(),
+    'expires_at' => time() + 600,
+];
+$_SESSION[GoogleAuthService::STATE_SESSION_KEY] = $session6;
+[$ok6, $msg6] = GoogleAuthService::handleCallback(['state' => $session6['state'], 'code' => 'mock-code'], $ip);
+$res['conflicting_google_id_rejected'] = (!$ok6);
+
+// 7. Unverified Google email claim rejected
+$unverifiedClaimPayload = $basePayload;
+$unverifiedClaimPayload['email'] = "unver_claim_{$runId}@test.local";
+$unverifiedClaimPayload['sub'] = "sub_unver_claim_{$runId}";
+$unverifiedClaimPayload['email_verified'] = false;
+$stubClient->setIdToken($signJwt($unverifiedClaimPayload, $rsa, $kid));
+
+$session7 = [
+    'state' => 'state7_' . $runId,
+    'nonce' => $unverifiedClaimPayload['nonce'],
+    'code_verifier' => 'verifier7',
+    'return_url' => '/checkout',
+    'created_at' => time(),
+    'expires_at' => time() + 600,
+];
+$_SESSION[GoogleAuthService::STATE_SESSION_KEY] = $session7;
+[$ok7, $msg7] = GoogleAuthService::handleCallback(['state' => $session7['state'], 'code' => 'mock-code'], $ip);
+$res['unverified_email_claim_rejected'] = (!$ok7);
+
 // Cleanup
 GoogleAuthService::resetHttpClient();
-$res['unver_user_id'] = $unverUserId;
-$res['verif_user_id'] = $verifiedUserId;
+$res['new_cust_id'] = $newCustId;
+$res['link_user_id'] = $linkUserId;
+$res['blocked_user_id'] = $blockedUserId;
 $res['admin_user_id'] = $adminUserId;
 
 echo json_encode($res);
 EOF
 )
 
-GOOGLE_JSON=$(SHOPWISE_CONFIG=testing "$PHP_CMD" -r "$GOOGLE_RUNNER" "$RAND_SUF")
+GOOGLE_JSON=$(SHOPWISE_CONFIG=testing "$PHP_CMD" -r "$GOOGLE_RUNNER" "$VARIANT_ID" "$RAND_SUF")
 
 assert_g_true() {
     local key="$1"
@@ -640,19 +707,26 @@ assert_g_true() {
     fi
 }
 
-assert_g_true "unknown_google_rejected" "Unknown Google account cannot automatically register"
-assert_g_true "unknown_message_explains_reg" "Rejection message explains that account must be registered first"
-assert_g_true "unknown_user_not_created" "No rogue user row created for unknown Google account"
-assert_g_true "unverified_rejected" "Unverified ShopWise account attempting Google sign-in is rejected"
-assert_g_true "unverified_message_mentions_verification" "Rejection message informs user to verify email first"
-assert_g_true "unverified_pwd_intact" "Rejected Google link preserves existing password hash"
-assert_g_true "unverified_no_google_link" "Rejected Google link does not set google_id on account"
-assert_g_true "verified_account_links_ok" "Existing verified customer account successfully links Google identity"
-assert_g_true "verified_return_url_preserved" "Return URL (/checkout) preserved through Google OAuth callback"
-assert_g_true "google_id_linked" "Google ID correctly linked in users table"
-assert_g_true "linked_account_signs_in_ok" "Previously linked Google identity signs in successfully on subsequent visit"
-assert_g_true "session_customer_id_matches" "Customer session correctly established for linked Google user"
-assert_g_true "admin_role_rejected" "Staff/Admin users strictly forbidden from customer Google sign-in"
+assert_g_true "new_customer_registered" "New visitor clicking Continue with Google is automatically registered"
+assert_g_true "new_customer_row_created" "Customer row successfully created in database"
+assert_g_true "new_customer_role_is_customer" "New Google customer is assigned strictly 'customer' role"
+assert_g_true "new_customer_status_is_active" "New Google customer status is 'active'"
+assert_g_true "new_customer_email_verified" "New Google customer email treated as verified from Google claim"
+assert_g_true "new_customer_google_id_stored" "Google ID correctly recorded on customer record"
+assert_g_true "new_customer_password_is_null" "New Google customer password hash is safely null"
+assert_g_true "new_customer_cart_preserved" "Guest cart preserved and attached to new Google customer"
+assert_g_true "new_customer_return_url_preserved" "Return URL (/checkout) preserved for new Google customer"
+assert_g_true "returning_google_user_signs_in" "Returning customer with linked Google ID signs in successfully"
+assert_g_true "duplicate_account_prevented" "Subsequent Google logins do not create duplicate accounts"
+assert_g_true "existing_account_linked" "Existing account with matching email securely links Google identity"
+assert_g_true "existing_pwd_preserved" "Identity linking preserves existing customer password hash"
+assert_g_true "existing_google_id_linked" "Google ID attached to existing account upon linking"
+assert_g_true "existing_email_now_verified" "Email marked verified upon verified Google identity linking"
+assert_g_true "link_no_duplicate_row" "Linking does not create a duplicate user record"
+assert_g_true "blocked_user_rejected" "Suspended or blocked accounts strictly rejected from Google sign-in"
+assert_g_true "admin_role_rejected" "Staff/Admin accounts strictly forbidden from customer Google sign-in"
+assert_g_true "conflicting_google_id_rejected" "Account already linked to another Google identity rejects conflict"
+assert_g_true "unverified_email_claim_rejected" "Google account with unverified email claim is strictly refused"
 
 # ------------------------------------------------------------------------------
 # 6. DATABASE INTEGRITY AND CLEANUP
@@ -662,17 +736,19 @@ info "6. DATABASE INTEGRITY & CLEANUP"
 # Clean up all created test users and carts
 REG_UID=$(echo "$MERGE_JSON" | grep -o '"reg_user_id":[0-9]*' | cut -d':' -f2 || true)
 LOGIN_UID=$(echo "$MERGE_JSON" | grep -o '"login_user_id":[0-9]*' | cut -d':' -f2 || true)
-UNVER_UID=$(echo "$GOOGLE_JSON" | grep -o '"unver_user_id":[0-9]*' | cut -d':' -f2 || true)
-VERIF_UID=$(echo "$GOOGLE_JSON" | grep -o '"verif_user_id":[0-9]*' | cut -d':' -f2 || true)
+NEW_CUST_UID=$(echo "$GOOGLE_JSON" | grep -o '"new_cust_id":[0-9]*' | cut -d':' -f2 || true)
+LINK_UID=$(echo "$GOOGLE_JSON" | grep -o '"link_user_id":[0-9]*' | cut -d':' -f2 || true)
+BLOCKED_UID=$(echo "$GOOGLE_JSON" | grep -o '"blocked_user_id":[0-9]*' | cut -d':' -f2 || true)
 ADMIN_UID=$(echo "$GOOGLE_JSON" | grep -o '"admin_user_id":[0-9]*' | cut -d':' -f2 || true)
 
-ALL_UIDS="$REG_UID $LOGIN_UID $UNVER_UID $VERIF_UID $ADMIN_UID"
+ALL_UIDS="$REG_UID $LOGIN_UID $NEW_CUST_UID $LINK_UID $BLOCKED_UID $ADMIN_UID"
 for uid in $ALL_UIDS; do
     if [ -n "$uid" ] && [ "$uid" -gt 0 ]; then
         "$MYSQL_CMD" -u "$DB_USER" "$DB_NAME" -e "
             DELETE FROM cart_items WHERE cart_id IN (SELECT id FROM carts WHERE user_id = $uid);
             DELETE FROM carts WHERE user_id = $uid;
             DELETE FROM email_verifications WHERE user_id = $uid;
+            DELETE FROM password_resets WHERE user_id = $uid;
             DELETE FROM audit_log WHERE actor_user_id = $uid;
             DELETE FROM users WHERE id = $uid;
         "

@@ -147,11 +147,17 @@ include __DIR__ . '/partials/flash.php';
                                 </div>
 
                                 <?php if (GoogleAuthService::isConfigured()): ?>
-                                    <div class="col-12 text-center mt-2">
-                                        <div class="p-2 rounded bg-light border text-muted small" style="font-size: 0.8rem;">
-                                            <i class="bi bi-info-circle me-1 text-primary"></i>
-                                            <strong>Notice for Google users:</strong> Google Sign-In is only enabled for existing verified accounts. Please complete registration above; you can link Google after verifying your email.
+                                    <div class="col-12 my-3 text-center position-relative">
+                                        <div class="separator text-center position-relative">
+                                            <span class="bg-white px-2 text-muted small">or register with</span>
                                         </div>
+                                    </div>
+
+                                    <div class="col-12">
+                                        <a href="<?= e(url('auth/google' . (!empty($returnUrl) ? '?next=' . urlencode($returnUrl) : ''))) ?>" class="btn-social w-100 d-flex align-items-center justify-content-center text-decoration-none border rounded py-2 text-dark">
+                                            <i class="bi bi-google me-2 text-danger"></i>
+                                            <span>Continue with Google</span>
+                                        </a>
                                     </div>
                                 <?php endif; ?>
                             </div>

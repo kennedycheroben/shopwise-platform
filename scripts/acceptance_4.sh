@@ -993,15 +993,42 @@ try {
 }
 $res['bad_signature_rejected'] = $caughtSig;
 
-// 3. Unknown Google identity must NOT create a ShopWise account.
-$validJwt = $signJwt($basePayload, $resKey, $kid);
-$stubClient->setIdToken($validJwt);
-$_SESSION[GoogleAuthService::STATE_SESSION_KEY] = $sessionData;
-[$unknownOk, $unknownData] = GoogleAuthService::handleCallback(['state' => $state, 'code' => 'mock-code'], $ip);
-$res['unknown_google_user_rejected'] = !$unknownOk;
-$stmtU = $pdo->prepare("SELECT COUNT(*) FROM users WHERE email = :e");
-$stmtU->execute([':e' => $basePayload['email']]);
-$res['unknown_google_user_not_created'] = ((int)$stmtU->fetchColumn() === 0);
+// 3. New Google identity automatically registers a new ShopWise customer account.
+$newGoogleEmail = "new_google_{$runId}@test.local";
+$newPayload = $basePayload;
+$newPayload['email'] = $newGoogleEmail;
+$newPayload['sub'] = "google_sub_new_{$runId}";
+$newPayload['given_name'] = 'NewGoogle';
+$newPayload['family_name'] = 'Customer';
+$newJwt = $signJwt($newPayload, $resKey, $kid);
+$stubClient->setIdToken($newJwt);
+
+$newSession = [
+    'state' => 'new_state_' . $runId,
+    'nonce' => $newPayload['nonce'],
+    'code_verifier' => 'new_verifier',
+    'return_url' => '/account',
+    'created_at' => time(),
+    'expires_at' => time() + 600,
+];
+$_SESSION[GoogleAuthService::STATE_SESSION_KEY] = $newSession;
+[$newOk, $newData] = GoogleAuthService::handleCallback(['state' => $newSession['state'], 'code' => 'mock-code'], $ip);
+$res['new_google_user_registered'] = $newOk;
+
+$stmtNew = $pdo->prepare("SELECT id, role, status, email_verified_at, google_id FROM users WHERE email = :e");
+$stmtNew->execute([':e' => $newGoogleEmail]);
+$newUserRow = $stmtNew->fetch(PDO::FETCH_ASSOC);
+$newUserId = (int)($newUserRow['id'] ?? 0);
+
+$res['new_google_user_session_created'] = (
+    $newUserId > 0 &&
+    $newUserRow['role'] === 'customer' &&
+    $newUserRow['status'] === 'active' &&
+    !empty($newUserRow['email_verified_at']) &&
+    $newUserRow['google_id'] === $newPayload['sub'] &&
+    ((int)($_SESSION[CustomerAuthService::SESSION_KEY]['id'] ?? 0) === $newUserId)
+);
+$res['new_user_id'] = $newUserId;
 
 // 4. A pre-existing, verified ShopWise customer can link and use Google sign-in.
 $existingEmail = "existing_google_{$runId}@test.local";
@@ -1037,7 +1064,7 @@ $res['existing_email_stays_verified'] = !empty($linkedUser['email_verified_at'])
 $res['existing_google_id_linked'] = (($linkedUser['google_id'] ?? '') === $linkPayload['sub']);
 $res['existing_customer_session_created'] = ((int)($_SESSION[CustomerAuthService::SESSION_KEY]['id'] ?? 0) === $existingId);
 
-// 5. Unverified existing accounts cannot be linked; password and tokens stay untouched.
+// 5. Existing unverified account: when verified Google email matches, link identity and mark email verified without touching password.
 $unverEmail = "unverified_google_{$runId}@test.local";
 $unverPassword = "UnverifiedPass2026_{$runId}!";
 $unverPasswordHash = password_hash($unverPassword, PASSWORD_DEFAULT);
@@ -1062,14 +1089,14 @@ $unverifiedSession = [
     'expires_at' => time() + 600,
 ];
 $_SESSION[GoogleAuthService::STATE_SESSION_KEY] = $unverifiedSession;
-[$unverifiedOk, $unverifiedMessage] = GoogleAuthService::handleCallback(['state' => $unverifiedSession['state'], 'code' => 'mock-code'], $ip);
-$res['unverified_existing_account_rejected'] = !$unverifiedOk;
+[$unverifiedOk, $unverifiedData] = GoogleAuthService::handleCallback(['state' => $unverifiedSession['state'], 'code' => 'mock-code'], $ip);
+$res['unverified_existing_account_linked'] = $unverifiedOk;
 
 $stmtUnverified = $pdo->prepare("SELECT password_hash, email_verified_at, google_id FROM users WHERE id = :id");
 $stmtUnverified->execute([':id' => $unverifiedId]);
 $unverifiedUser = $stmtUnverified->fetch(PDO::FETCH_ASSOC);
 $res['unverified_password_preserved'] = password_verify($unverPassword, $unverifiedUser['password_hash'] ?? '');
-$res['unverified_account_not_linked'] = empty($unverifiedUser['google_id']) && empty($unverifiedUser['email_verified_at']);
+$res['unverified_email_now_verified'] = (($unverifiedUser['google_id'] ?? '') === $unverifiedPayload['sub']) && !empty($unverifiedUser['email_verified_at']);
 $verifUsed = (int)$pdo->query("SELECT COUNT(*) FROM email_verifications WHERE user_id = $unverifiedId AND used_at IS NOT NULL")->fetchColumn();
 $resetUsed = (int)$pdo->query("SELECT COUNT(*) FROM password_resets WHERE user_id = $unverifiedId AND used_at IS NOT NULL")->fetchColumn();
 $res['unverified_tokens_preserved'] = ($verifUsed === 0 && $resetUsed === 0);
@@ -1115,21 +1142,23 @@ assert_g_true "expired_token_rejected" "ID token validation strictly rejects exp
 assert_g_true "wrong_nonce_rejected" "ID token validation strictly rejects nonce mismatch"
 assert_g_true "unverified_email_rejected" "Google account with unverified email is strictly refused"
 assert_g_true "bad_signature_rejected" "Tampered or invalid token RS256 signature is rejected"
-assert_g_true "unknown_google_user_rejected" "Unknown Google identity is refused instead of creating an account"
-assert_g_true "unknown_google_user_not_created" "Google sign-in does not insert a new ShopWise user"
+assert_g_true "new_google_user_registered" "New customer automatically registered via Google with customer role"
+assert_g_true "new_google_user_session_created" "New customer session created with verified email"
 assert_g_true "existing_customer_linked" "Verified existing ShopWise customer can link Google"
 assert_g_true "existing_password_preserved" "Linking Google does not remove or replace the customer's password"
 assert_g_true "existing_email_stays_verified" "Verified existing account retains its verified email state"
 assert_g_true "existing_google_id_linked" "Google subject is stored on the existing customer account"
 assert_g_true "existing_customer_session_created" "Successful Google link creates the normal customer session"
-assert_g_true "unverified_existing_account_rejected" "Unverified ShopWise account cannot be linked using Google"
-assert_g_true "unverified_password_preserved" "Rejected link leaves the existing password intact"
-assert_g_true "unverified_account_not_linked" "Rejected link does not verify or link the unverified account"
-assert_g_true "unverified_tokens_preserved" "Rejected link leaves verification and reset tokens untouched"
+assert_g_true "unverified_existing_account_linked" "Unverified existing account is verified and linked via verified Google identity"
+assert_g_true "unverified_password_preserved" "Linking unverified account preserves existing password hash"
+assert_g_true "unverified_email_now_verified" "Linking unverified account updates email verification timestamp"
+assert_g_true "unverified_tokens_preserved" "Linking unverified account leaves verification and reset tokens untouched"
 assert_g_true "linked_google_user_can_sign_in" "Previously linked Google identity can sign in on later visits"
 
+G_NEWUID=$(echo "$GOOGLE_JSON" | grep -o '"new_user_id":[0-9]*' | cut -d: -f2)
 G_EUID=$(echo "$GOOGLE_JSON" | grep -o '"existing_user_id":[0-9]*' | cut -d: -f2)
 G_UNVID=$(echo "$GOOGLE_JSON" | grep -o '"unverified_user_id":[0-9]*' | cut -d: -f2)
+[ -n "$G_NEWUID" ] && [ "$G_NEWUID" -gt 0 ] && CREATED_USER_IDS+=("$G_NEWUID")
 [ -n "$G_EUID" ] && [ "$G_EUID" -gt 0 ] && CREATED_USER_IDS+=("$G_EUID")
 [ -n "$G_UNVID" ] && [ "$G_UNVID" -gt 0 ] && CREATED_USER_IDS+=("$G_UNVID")
 

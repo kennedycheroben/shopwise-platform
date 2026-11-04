@@ -125,14 +125,8 @@ include __DIR__ . '/partials/flash.php';
                                                 <div class="social-buttons">
                                                     <a href="<?= e(url('auth/google' . (!empty($returnUrl) ? '?next=' . urlencode($returnUrl) : ''))) ?>" class="btn-social w-100 d-flex align-items-center justify-content-center text-decoration-none border rounded py-2 text-dark">
                                                         <i class="bi bi-google me-2 text-danger"></i>
-                                                        <span>Sign in with Google</span>
+                                                        <span>Continue with Google</span>
                                                     </a>
-                                                </div>
-                                                <div class="text-center mt-2">
-                                                    <small class="text-muted d-block" style="font-size: 0.8rem;">
-                                                        <i class="bi bi-shield-check text-success me-1"></i>
-                                                        Google Sign-In is available for existing verified ShopWise accounts. New customers, please <a href="<?= e(url('register' . (!empty($returnUrl) ? '?next=' . urlencode($returnUrl) : ''))) ?>" class="text-primary text-decoration-none fw-semibold">register first</a>.
-                                                    </small>
                                                 </div>
                                             <?php endif; ?>
                                         </form>
