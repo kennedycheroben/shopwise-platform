@@ -197,7 +197,6 @@ final class GoogleAuthService
 
         self::$jwksCache = $data['keys'];
         self::$jwksCacheTime = $now;
-
         return self::$jwksCache;
     }
 
@@ -217,7 +216,8 @@ final class GoogleAuthService
         $signature = self::base64UrlDecode($rawSignature);
 
         if (!is_array($header) || !is_array($payload)) {
-            throw new RuntimeException('Malformed ID token JSON.');        }
+            throw new RuntimeException('Malformed ID token JSON.');
+        }
 
         // Verify header
         if (($header['alg'] ?? '') !== 'RS256') {
@@ -440,7 +440,7 @@ final class GoogleAuthService
         // and its email has already been verified through the normal registration flow.
         $stmt = $pdo->prepare("
             SELECT id, role, first_name, last_name, email, phone, status,
-                   google_id, avatar_url, email_verified_at, password_hash
+                   google_id, avatar_url, email_verified_at
             FROM users
             WHERE email = :email
             LIMIT 1
