@@ -504,7 +504,7 @@ final class GoogleAuthService
                 ':id' => $userId,
             ]);
             $pdo->commit();
-        } catch (\\Throwable $e) {
+        } catch (\Throwable $e) {
             if ($pdo->inTransaction()) {
                 $pdo->rollBack();
             }
