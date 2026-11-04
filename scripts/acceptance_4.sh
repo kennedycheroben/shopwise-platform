@@ -993,72 +993,103 @@ try {
 }
 $res['bad_signature_rejected'] = $caughtSig;
 
-// 3. New Customer Registration via Google OAuth
+// 3. Unknown Google identity must NOT create a ShopWise account.
 $validJwt = $signJwt($basePayload, $resKey, $kid);
 $stubClient->setIdToken($validJwt);
-
-$_SESSION[GoogleAuthService::STATE_SESSION_KEY] = $sessionData; // reload state
-[$hOk, $hData] = GoogleAuthService::handleCallback(['state' => $state, 'code' => 'mock-code'], $ip);
-$res['google_new_user_ok'] = $hOk;
-
-$stmtU = $pdo->prepare("SELECT id, role, password_hash, email_verified_at, google_id FROM users WHERE email = :e");
+$_SESSION[GoogleAuthService::STATE_SESSION_KEY] = $sessionData;
+[$unknownOk, $unknownData] = GoogleAuthService::handleCallback(['state' => $state, 'code' => 'mock-code'], $ip);
+$res['unknown_google_user_rejected'] = !$unknownOk;
+$stmtU = $pdo->prepare("SELECT COUNT(*) FROM users WHERE email = :e");
 $stmtU->execute([':e' => $basePayload['email']]);
-$newGUser = $stmtU->fetch(PDO::FETCH_ASSOC);
+$res['unknown_google_user_not_created'] = ((int)$stmtU->fetchColumn() === 0);
 
-$res['google_user_has_null_pwd'] = ($newGUser['password_hash'] === null);
-$res['google_user_email_verified'] = !empty($newGUser['email_verified_at']);
-$res['google_user_id_saved'] = ($newGUser['google_id'] === $basePayload['sub']);
-
-// 4. Pre-registration account takeover guard:
-// If an unverified customer with that email already exists, its password hash is wiped,
-// outstanding tokens invalidated, and sessions destroyed before linking!
-$unverEmail = "pre_reg_{$runId}@test.local";
+// 4. A pre-existing, verified ShopWise customer can link and use Google sign-in.
+$existingEmail = "existing_google_{$runId}@test.local";
+$existingPassword = "ExistingPass2026_{$runId}!";
+$existingPasswordHash = password_hash($existingPassword, PASSWORD_DEFAULT);
 $pdo->prepare("
     INSERT INTO users (role, first_name, last_name, email, password_hash, email_verified_at, status, created_at, updated_at)
-    VALUES ('customer', 'PreReg', 'User', :e, 'hash_to_be_wiped', NULL, 'active', NOW(), NOW())
-")->execute([':e' => $unverEmail]);
-$preRegId = (int)$pdo->lastInsertId();
+    VALUES ('customer', 'Existing', 'Customer', :e, :p, NOW(), 'active', NOW(), NOW())
+")->execute([':e' => $existingEmail, ':p' => $existingPasswordHash]);
+$existingId = (int)$pdo->lastInsertId();
 
-// Create fake active verification and reset tokens
-$pdo->prepare("INSERT INTO email_verifications (user_id, token_hash, expires_at, created_at) VALUES (?, 'tok1', DATE_ADD(NOW(), INTERVAL 1 DAY), NOW())")->execute([$preRegId]);
-$pdo->prepare("INSERT INTO password_resets (user_id, token_hash, expires_at, created_at) VALUES (?, 'tok2', DATE_ADD(NOW(), INTERVAL 1 HOUR), NOW())")->execute([$preRegId]);
-
-$takeoverPayload = $basePayload;
-$takeoverPayload['email'] = $unverEmail;
-$takeoverPayload['sub'] = "google_sub_takeover_{$runId}";
-$takeoverJwt = $signJwt($takeoverPayload, $resKey, $kid);
-$stubClient->setIdToken($takeoverJwt);
-
-$sessionData2 = [
-    'state' => 'state2_' . $runId,
-    'nonce' => $takeoverPayload['nonce'],
-    'code_verifier' => 'verifier2',
+$linkPayload = $basePayload;
+$linkPayload['email'] = $existingEmail;
+$linkPayload['sub'] = "google_sub_existing_{$runId}";
+$linkJwt = $signJwt($linkPayload, $resKey, $kid);
+$stubClient->setIdToken($linkJwt);
+$linkSession = [
+    'state' => 'existing_state_' . $runId,
+    'nonce' => $linkPayload['nonce'],
+    'code_verifier' => 'existing_verifier',
     'return_url' => '/account',
+    'created_at' => time(),
     'expires_at' => time() + 600,
 ];
-$_SESSION[GoogleAuthService::STATE_SESSION_KEY] = $sessionData2;
-
-[$linkOk, $linkData] = GoogleAuthService::handleCallback(['state' => $sessionData2['state'], 'code' => 'mock-code'], $ip);
-$res['linking_ok'] = $linkOk;
-
-$stmtLinked = $pdo->prepare("SELECT password_hash, email_verified_at, google_id FROM users WHERE id = :id");
-$stmtLinked->execute([':id' => $preRegId]);
+$_SESSION[GoogleAuthService::STATE_SESSION_KEY] = $linkSession;
+[$linkOk, $linkedData] = GoogleAuthService::handleCallback(['state' => $linkSession['state'], 'code' => 'mock-code'], $ip);
+$res['existing_customer_linked'] = $linkOk;
+$stmtLinked = $pdo->prepare("SELECT id, role, password_hash, email_verified_at, google_id FROM users WHERE id = :id");
+$stmtLinked->execute([':id' => $existingId]);
 $linkedUser = $stmtLinked->fetch(PDO::FETCH_ASSOC);
+$res['existing_password_preserved'] = password_verify($existingPassword, $linkedUser['password_hash'] ?? '');
+$res['existing_email_stays_verified'] = !empty($linkedUser['email_verified_at']);
+$res['existing_google_id_linked'] = (($linkedUser['google_id'] ?? '') === $linkPayload['sub']);
+$res['existing_customer_session_created'] = ((int)($_SESSION[CustomerAuthService::SESSION_KEY]['id'] ?? 0) === $existingId);
 
-$res['password_hash_wiped'] = ($linkedUser['password_hash'] === null);
-$res['email_now_verified'] = !empty($linkedUser['email_verified_at']);
-$res['google_id_linked'] = ($linkedUser['google_id'] === $takeoverPayload['sub']);
+// 5. Unverified existing accounts cannot be linked; password and tokens stay untouched.
+$unverEmail = "unverified_google_{$runId}@test.local";
+$unverPassword = "UnverifiedPass2026_{$runId}!";
+$unverPasswordHash = password_hash($unverPassword, PASSWORD_DEFAULT);
+$pdo->prepare("
+    INSERT INTO users (role, first_name, last_name, email, password_hash, email_verified_at, status, created_at, updated_at)
+    VALUES ('customer', 'Unverified', 'Customer', :e, :p, NULL, 'active', NOW(), NOW())
+")->execute([':e' => $unverEmail, ':p' => $unverPasswordHash]);
+$unverifiedId = (int)$pdo->lastInsertId();
+$pdo->prepare("INSERT INTO email_verifications (user_id, token_hash, expires_at, created_at) VALUES (?, 'unver_tok1', DATE_ADD(NOW(), INTERVAL 1 DAY), NOW())")->execute([$unverifiedId]);
+$pdo->prepare("INSERT INTO password_resets (user_id, token_hash, expires_at, created_at) VALUES (?, 'unver_tok2', DATE_ADD(NOW(), INTERVAL 1 HOUR), NOW())")->execute([$unverifiedId]);
 
-// Verify outstanding tokens invalidated
-$verifUsed = (int)$pdo->query("SELECT COUNT(*) FROM email_verifications WHERE user_id = $preRegId AND used_at IS NOT NULL")->fetchColumn();
-$resetUsed = (int)$pdo->query("SELECT COUNT(*) FROM password_resets WHERE user_id = $preRegId AND used_at IS NOT NULL")->fetchColumn();
-$res['prior_tokens_invalidated'] = ($verifUsed === 1 && $resetUsed === 1);
+$unverifiedPayload = $basePayload;
+$unverifiedPayload['email'] = $unverEmail;
+$unverifiedPayload['sub'] = "google_sub_unverified_{$runId}";
+$stubClient->setIdToken($signJwt($unverifiedPayload, $resKey, $kid));
+$unverifiedSession = [
+    'state' => 'unverified_state_' . $runId,
+    'nonce' => $unverifiedPayload['nonce'],
+    'code_verifier' => 'unverified_verifier',
+    'return_url' => '/account',
+    'created_at' => time(),
+    'expires_at' => time() + 600,
+];
+$_SESSION[GoogleAuthService::STATE_SESSION_KEY] = $unverifiedSession;
+[$unverifiedOk, $unverifiedMessage] = GoogleAuthService::handleCallback(['state' => $unverifiedSession['state'], 'code' => 'mock-code'], $ip);
+$res['unverified_existing_account_rejected'] = !$unverifiedOk;
+
+$stmtUnverified = $pdo->prepare("SELECT password_hash, email_verified_at, google_id FROM users WHERE id = :id");
+$stmtUnverified->execute([':id' => $unverifiedId]);
+$unverifiedUser = $stmtUnverified->fetch(PDO::FETCH_ASSOC);
+$res['unverified_password_preserved'] = password_verify($unverPassword, $unverifiedUser['password_hash'] ?? '');
+$res['unverified_account_not_linked'] = empty($unverifiedUser['google_id']) && empty($unverifiedUser['email_verified_at']);
+$verifUsed = (int)$pdo->query("SELECT COUNT(*) FROM email_verifications WHERE user_id = $unverifiedId AND used_at IS NOT NULL")->fetchColumn();
+$resetUsed = (int)$pdo->query("SELECT COUNT(*) FROM password_resets WHERE user_id = $unverifiedId AND used_at IS NOT NULL")->fetchColumn();
+$res['unverified_tokens_preserved'] = ($verifUsed === 0 && $resetUsed === 0);
+
+// 6. The linked Google identity can authenticate on subsequent visits.
+$repeatSession = [
+    'state' => 'repeat_state_' . $runId,
+    'nonce' => $linkPayload['nonce'],
+    'code_verifier' => 'repeat_verifier',
+    'return_url' => '/account',
+    'created_at' => time(),
+    'expires_at' => time() + 600,
+];
+$_SESSION[GoogleAuthService::STATE_SESSION_KEY] = $repeatSession;
+[$repeatOk, $repeatData] = GoogleAuthService::handleCallback(['state' => $repeatSession['state'], 'code' => 'mock-code'], $ip);
+$res['linked_google_user_can_sign_in'] = $repeatOk && ((int)($_SESSION[CustomerAuthService::SESSION_KEY]['id'] ?? 0) === $existingId);
 
 GoogleAuthService::resetHttpClient();
-
-$res['new_user_id'] = (int)($newGUser['id'] ?? 0);
-$res['prereg_user_id'] = $preRegId;
-
+$res['existing_user_id'] = $existingId;
+$res['unverified_user_id'] = $unverifiedId;
 echo json_encode($res);
 EOF
 )
@@ -1083,17 +1114,25 @@ assert_g_true "expired_token_rejected" "ID token validation strictly rejects exp
 assert_g_true "wrong_nonce_rejected" "ID token validation strictly rejects nonce mismatch"
 assert_g_true "unverified_email_rejected" "Google account with unverified email is strictly refused"
 assert_g_true "bad_signature_rejected" "Tampered or invalid token RS256 signature is rejected"
-assert_g_true "google_new_user_ok" "New customer account created via verified Google ID token"
-assert_g_true "google_user_has_null_pwd" "Google-created customer has password_hash NULL"
-assert_g_true "google_user_email_verified" "Google-created customer email_verified_at is automatically established"
-assert_g_true "google_user_id_saved" "google_id stored securely on customer record"
-assert_g_true "password_hash_wiped" "Pre-registration account takeover prevented: unverified password hash wiped upon Google linking"
-assert_g_true "prior_tokens_invalidated" "Outstanding verification and reset tokens invalidated upon Google link"
+assert_g_true "unknown_google_user_rejected" "Unknown Google identity is refused instead of creating an account"
+assert_g_true "unknown_google_user_not_created" "Google sign-in does not insert a new ShopWise user"
+assert_g_true "existing_customer_linked" "Verified existing ShopWise customer can link Google"
+assert_g_true "existing_password_preserved" "Linking Google does not remove or replace the customer's password"
+assert_g_true "existing_email_stays_verified" "Verified existing account retains its verified email state"
+assert_g_true "existing_google_id_linked" "Google subject is stored on the existing customer account"
+assert_g_true "existing_customer_session_created" "Successful Google link creates the normal customer session"
+assert_g_true "unverified_existing_account_rejected" "Unverified ShopWise account cannot be linked using Google"
+assert_g_true "unverified_password_preserved" "Rejected link leaves the existing password intact"
+assert_g_true "unverified_account_not_linked" "Rejected link does not verify or link the unverified account"
+assert_g_true "unverified_tokens_preserved" "Rejected link leaves verification and reset tokens untouched"
+assert_g_true "linked_google_user_can_sign_in" "Previously linked Google identity can sign in on later visits"
 
-G_NUID=$(echo "$GOOGLE_JSON" | grep -o '"new_user_id":[0-9]*' | cut -d: -f2)
-G_PUID=$(echo "$GOOGLE_JSON" | grep -o '"prereg_user_id":[0-9]*' | cut -d: -f2)
-[ -n "$G_NUID" ] && [ "$G_NUID" -gt 0 ] && CREATED_USER_IDS+=("$G_NUID")
-[ -n "$G_PUID" ] && [ "$G_PUID" -gt 0 ] && CREATED_USER_IDS+=("$G_PUID")
+G_EUID=$(echo "$GOOGLE_JSON" | grep -o '"existing_user_id":[0-9]*' | cut -d: -f2)
+G_UNVID=$(echo "$GOOGLE_JSON" | grep -o '"unverified_user_id":[0-9]*' | cut -d: -f2)
+[ -n "$G_EUID" ] && [ "$G_EUID" -gt 0 ] && CREATED_USER_IDS+=("$G_EUID")
+[ -n "$G_UNVID" ] && [ "$G_UNVID" -gt 0 ] && CREATED_USER_IDS+=("$G_UNVID")
+
+
 
 # ==============================================================================
 # SUBTEST (g): Cart Merge with stock clamping, 10-line cap & concurrency
@@ -1198,7 +1237,6 @@ assert_c_true "merge_idempotent" "Cart merge operation is strictly idempotent on
 
 C_UID=$(echo "$CART_JSON" | grep -o '"user_id":[0-9]*' | cut -d: -f2)
 [ -n "$C_UID" ] && [ "$C_UID" -gt 0 ] && CREATED_USER_IDS+=("$C_UID")
-
 # ==============================================================================
 # SUBTEST (h): Account area IDOR defense, addresses CRUD & 10-address cap
 # ==============================================================================
