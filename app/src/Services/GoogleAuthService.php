@@ -197,6 +197,7 @@ final class GoogleAuthService
 
         self::$jwksCache = $data['keys'];
         self::$jwksCacheTime = $now;
+
         return self::$jwksCache;
     }
 
