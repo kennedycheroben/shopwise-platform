@@ -155,6 +155,15 @@ $router->get('/category/{slug}', function (array $params) use ($cartService, $ca
     $category = $catalogService->getCategoryBySlug($slug);
 
     if (!$category) {
+        $normalizedSlug = slugify($slug);
+        if ($normalizedSlug !== '' && $normalizedSlug !== $slug) {
+            $catNormalized = $catalogService->getCategoryBySlug($normalizedSlug);
+            if ($catNormalized && !empty($catNormalized['is_active'])) {
+                redirect('category/' . $normalizedSlug, 301);
+                return;
+            }
+        }
+
         $targetSlug = \App\Services\CategoryService::findCurrentSlugForHistorical($slug);
         if ($targetSlug && $targetSlug !== $slug) {
             redirect('category/' . $targetSlug, 301);
@@ -619,16 +628,18 @@ $router->post('/checkout/quote', function () use ($cartService) {
     $lng = (isset($input['longitude']) && is_numeric($input['longitude'])) ? (float)$input['longitude'] : ((isset($input['lng']) && is_numeric($input['lng'])) ? (float)$input['lng'] : null);
     $couponCode = trim((string)($input['coupon_code'] ?? ($cart['coupon_code'] ?? '')));
 
-    // Match zone automatically from county/area if zone_id not explicitly given
-    if ($zoneId === null && $lat === null && $lng === null && ($county !== '' || $area !== '')) {
-        $matched = \App\Services\DeliveryService::matchZoneByLocation($county, $area);
-        if ($matched) {
-            $zoneId = (int)$matched['id'];
-        } else {
-            send_json_response([
-                'success' => false,
-                'error'   => 'Delivery is unavailable for ' . htmlspecialchars($county . ($area ? " - {$area}" : ''), ENT_QUOTES, 'UTF-8') . '. Please choose a supported delivery zone.',
-            ], 400);
+    // Authoritative zone resolution from County & Area
+    if (($deliveryMethod === 'delivery' || $deliveryMethod === 'zone') && $lat === null && $lng === null) {
+        if ($county !== '' || $area !== '') {
+            try {
+                $matched = \App\Services\DeliveryService::resolveAuthoritativeZone($county, $area, $zoneId);
+                $zoneId = (int)$matched['id'];
+            } catch (\DomainException $e) {
+                send_json_response([
+                    'success' => false,
+                    'error'   => $e->getMessage(),
+                ], 400);
+            }
         }
     }
 
@@ -832,33 +843,13 @@ $router->post('/checkout/place', function () use ($cartService) {
                     redirect('checkout');
                 }
 
-                // If zoneId was omitted, resolve from county & area
-                if ($zoneId === null) {
-                    $matchedZone = \App\Services\DeliveryService::matchZoneByLocation($county, $area);
-                    if ($matchedZone) {
-                        $zoneId = (int)$matchedZone['id'];
-                    }
-                }
-
-                if ($zoneId === null) {
-                    flash_set('error', "Delivery is unavailable for '{$county} - {$area}'. Please choose a supported delivery zone.");
+                // Authoritative zone resolution from County & Area (tamper-proof)
+                try {
+                    $matchedZone = \App\Services\DeliveryService::resolveAuthoritativeZone($county, $area, $zoneId);
+                    $zoneId = (int)$matchedZone['id'];
+                } catch (\DomainException $e) {
+                    flash_set('error', $e->getMessage());
                     redirect('checkout');
-                }
-
-                $zoneRecord = \App\Services\DeliveryService::getZoneById($zoneId);
-                if (!$zoneRecord) {
-                    flash_set('error', 'The selected delivery zone could not be found.');
-                    redirect('checkout');
-                }
-                if (empty($zoneRecord['is_active'])) {
-                    flash_set('error', "Selected delivery zone '{$zoneRecord['county']} - {$zoneRecord['area']}' is currently inactive.");
-                    redirect('checkout');
-                }
-
-                // Client price/zone tampering defense: verify zone matches selected county & area
-                $matchedForLocation = \App\Services\DeliveryService::matchZoneByLocation($county, $area);
-                if ($matchedForLocation && (int)$matchedForLocation['id'] !== $zoneId) {
-                    $zoneId = (int)$matchedForLocation['id'];
                 }
             }
 
@@ -1941,31 +1932,40 @@ $router->get('/robots.txt', function () {
 });
 
 /* -------------------------------------------------------------------------
- * ROUTE: POST /cart/test/clear-rate-limits
- * Guarded: ONLY registered when SHOPWISE_TESTING_MODE is active
+ * ROUTE: POST /cart/test/clear-rate-limits & POST /test/cleanup-test-uploads
+ * Guarded: ONLY registered when SHOPWISE_TESTING_MODE is active and environment is local
  * ------------------------------------------------------------------------- */
-if (defined('SHOPWISE_TESTING_MODE') && SHOPWISE_TESTING_MODE === true) {
+if (defined('SHOPWISE_TESTING_MODE') && SHOPWISE_TESTING_MODE === true && ($appConfig['app']['environment'] ?? '') === 'local') {
     $router->post('/cart/test/clear-rate-limits', function () {
         CartService::clearRateLimits();
         send_json_response(['success' => true, 'message' => 'Rate limits cleared.']);
     });
 
     $router->post('/test/cleanup-test-uploads', function () {
-        $uploadBase = dirname(__DIR__) . '/public/uploads/products';
+        // Verify database is strictly test database
+        $pdo = \App\Database\Database::getInstance();
+        $dbName = $pdo->query('SELECT DATABASE()')->fetchColumn();
+        if ($dbName !== 'shopwise_test') {
+            send_json_response(['success' => false, 'error' => 'Forbidden: test cleanup restricted strictly to test database.'], 403);
+        }
+
+        // Strictly target isolated test upload directory (never production uploads)
+        $uploadBase = dirname(__DIR__) . '/public/uploads_test/products';
         if (is_dir($uploadBase)) {
             $iterator = new RecursiveIteratorIterator(
                 new RecursiveDirectoryIterator($uploadBase, RecursiveDirectoryIterator::SKIP_DOTS),
                 RecursiveIteratorIterator::CHILD_FIRST
             );
             foreach ($iterator as $item) {
-                if ($item->isFile()) {
+                $filename = $item->getFilename();
+                if ($item->isFile() && $filename !== '.gitkeep' && $filename !== '.htaccess') {
                     @unlink($item->getPathname());
                 } elseif ($item->isDir()) {
                     @rmdir($item->getPathname());
                 }
             }
         }
-        send_json_response(['success' => true]);
+        send_json_response(['success' => true, 'target' => 'uploads_test']);
     });
 
     $router->get('/test/security-context-entry', function () {

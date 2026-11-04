@@ -17,6 +17,8 @@
 
 set -uo pipefail
 
+export SHOPWISE_CONFIG="testing"
+
 BASE_URL="${BASE_URL:-http://127.0.0.1/shopwise-platform/public}"
 BASE_URL="${BASE_URL%/}"
 

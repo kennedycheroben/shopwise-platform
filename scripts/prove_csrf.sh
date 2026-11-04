@@ -40,6 +40,7 @@ VALUES ('admin', 'CSRF', 'Verifier', '$TEST_ADMIN_EMAIL', '$HASHED_PASS', '25471
 " 2>/dev/null
 
 ADMIN_USER_ID=$("$MYSQL_CMD" -u root shopwise_test -N -s -e "SELECT id FROM users WHERE email='$TEST_ADMIN_EMAIL';" 2>/dev/null)
+"$MYSQL_CMD" -u root shopwise_test -e "INSERT INTO user_roles (user_id, role, assigned_at) VALUES ($ADMIN_USER_ID, 'admin', NOW());" 2>/dev/null
 
 # Clean up throwaway admin on exit
 cleanup() {

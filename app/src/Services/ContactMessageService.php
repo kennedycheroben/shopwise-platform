@@ -9,6 +9,12 @@ use PDO;
 final class ContactMessageService
 {
     /**
+     * Testing hook to inject failures inside the transaction for rollback verification.
+     * Only active when SHOPWISE_TESTING_MODE is true.
+     * @var callable|null
+     */
+    public static $testFailureHook = null;
+    /**
      * List contact inquiries with optional status or keyword filters.
      */
     public static function list(array $filters = []): array
@@ -167,6 +173,10 @@ HTML;
                 'subject'  => $subject,
                 'reply'    => $replyBody,
             ], $ip);
+
+            if (defined('SHOPWISE_TESTING_MODE') && SHOPWISE_TESTING_MODE === true && is_callable(self::$testFailureHook)) {
+                (self::$testFailureHook)($pdo, $id);
+            }
 
             if ($needsCommit) {
                 $pdo->commit();

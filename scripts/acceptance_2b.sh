@@ -386,6 +386,7 @@ ADMIN_USER_ID=$(run_sql "SELECT id FROM users WHERE email = '$ADMIN_EMAIL' LIMIT
 STAFF_USER_ID=$(run_sql "SELECT id FROM users WHERE email = '$STAFF_EMAIL' LIMIT 1;" | tail -n 1)
 CUST_USER_ID=$(run_sql "SELECT id FROM users WHERE email = '$CUST_EMAIL' LIMIT 1;" | tail -n 1)
 CREATED_USER_IDS+=("$ADMIN_USER_ID" "$STAFF_USER_ID" "$CUST_USER_ID")
+run_sql "INSERT INTO user_roles (user_id, role, assigned_at) VALUES ($ADMIN_USER_ID, 'admin', NOW()), ($STAFF_USER_ID, 'staff', NOW());"
 
 # Login function
 login_user() {

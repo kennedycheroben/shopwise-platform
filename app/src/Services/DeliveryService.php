@@ -288,80 +288,209 @@ final class DeliveryService
     }
 
     /**
-     * Match a given county and area/neighborhood string to an active delivery zone.
-     * Supports exact matching, comma-separated area matching, and partial matching.
+     * Check if a customer-supplied county matches a delivery zone county definition.
      */
-    public static function matchZoneByLocation(string $county, string $area): ?array
+    public static function countyMatchesZone(string $customerCounty, array $zone): bool
+    {
+        $custCounty = mb_strtolower(trim(preg_replace('/\s+County$/i', '', $customerCounty)));
+        if ($custCounty === '') {
+            return false;
+        }
+
+        $zoneCounty = mb_strtolower(trim($zone['county']));
+        if ($zoneCounty === $custCounty) {
+            return true;
+        }
+
+        // Split composite county names by commas, '&', 'and'
+        $parts = preg_split('/[,&]|\band\b/', $zoneCounty);
+        foreach ($parts as $p) {
+            $cleanP = mb_strtolower(trim(preg_replace('/\s+County$/i', '', $p)));
+            if ($cleanP !== '' && ($cleanP === $custCounty || str_contains($custCounty, $cleanP) || str_contains($cleanP, $custCounty))) {
+                return true;
+            }
+        }
+
+        // If zone is "Other Major Towns", check if customer county is explicitly that or one of its covered towns
+        if (str_contains($zoneCounty, 'other major towns')) {
+            if ($custCounty === 'other major towns' || $custCounty === 'major towns' || $custCounty === 'upcountry') {
+                return true;
+            }
+            $coveredCounties = ['nakuru', 'mombasa', 'kisumu', 'eldoret', 'uasin gishu', 'nyeri', 'kisii'];
+            foreach ($coveredCounties as $c) {
+                if ($custCounty === $c || str_contains($custCounty, $c) || str_contains($c, $custCounty)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Check if a customer-supplied area matches a delivery zone area definition.
+     */
+    public static function areaMatchesZone(string $customerArea, array $zone): bool
+    {
+        $custArea = mb_strtolower(trim($customerArea));
+        if ($custArea === '') {
+            return false;
+        }
+
+        $zoneArea = mb_strtolower(trim($zone['area']));
+        if ($zoneArea === $custArea) {
+            return true;
+        }
+
+        // Build token list from zone area string
+        $tokens = [];
+        foreach (explode(',', $zoneArea) as $t) {
+            $t = trim($t);
+            if ($t !== '') {
+                $tokens[] = $t;
+                $clean = trim(preg_replace('/\s*\(.*?\)/', '', $t));
+                if ($clean !== '' && $clean !== $t) {
+                    $tokens[] = $clean;
+                }
+            }
+        }
+
+        // Extract parenthetical sub-areas, e.g. (Embakasi, Donholm, Umoja, Kayole)
+        if (preg_match_all('/\((.*?)\)/', $zoneArea, $matches)) {
+            foreach ($matches[1] as $inner) {
+                if (str_contains($inner, 'via courier')) {
+                    continue;
+                }
+                foreach (explode(',', $inner) as $innerT) {
+                    $innerT = trim($innerT);
+                    if ($innerT !== '') {
+                        $tokens[] = $innerT;
+                    }
+                }
+            }
+        }
+
+        // Add common aliases for major centers
+        if (str_contains($zoneArea, 'cbd')) {
+            $tokens[] = 'cbd';
+            $tokens[] = 'nairobi cbd';
+            $tokens[] = 'central business district';
+        }
+
+        foreach ($tokens as $token) {
+            $token = trim($token);
+            if ($token === $custArea) {
+                return true;
+            }
+            if (strlen($custArea) >= 3 && strlen($token) >= 3) {
+                if (str_contains($token, $custArea) || str_contains($custArea, $token)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Find matching zones for a given county and area pair.
+     * County and area are ALWAYS validated together.
+     *
+     * @return array List of matching zone rows
+     */
+    public static function findMatchingZones(string $county, string $area, bool $activeOnly = true): array
     {
         $county = trim($county);
         $area = trim($area);
         if ($county === '' || $area === '') {
-            return null;
+            return [];
         }
 
         $pdo = Database::getInstance();
-
-        // 1. Exact county & area match (active zones only)
-        $stmt = $pdo->prepare("SELECT * FROM delivery_zones WHERE is_active = 1 AND LOWER(county) = LOWER(:county) AND LOWER(area) = LOWER(:area) LIMIT 1");
-        $stmt->execute([':county' => $county, ':area' => $area]);
-        $zone = $stmt->fetch(PDO::FETCH_ASSOC);
-        if ($zone) {
-            return $zone;
+        $sql = "SELECT * FROM delivery_zones";
+        if ($activeOnly) {
+            $sql .= " WHERE is_active = 1";
         }
+        $sql .= " ORDER BY id ASC";
+        $zones = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
 
-        // 2. Fetch all active zones to test sub-area lists and composite county names
-        $zones = self::listZones(['is_active' => 1]);
-        $areaLower = mb_strtolower($area);
-        $countyLower = mb_strtolower($county);
-
-        // Check if county matches exactly or is in composite county (e.g. Kiambu in "Kiambu, Machakos & Kajiado")
-        foreach ($zones as $z) {
-            $zCountyLower = mb_strtolower($z['county']);
-            $countyMatches = ($zCountyLower === $countyLower)
-                || str_contains($zCountyLower, $countyLower);
-
-            if ($countyMatches) {
-                // Check if area matches whole or any token in comma-separated area string
-                $zAreaLower = mb_strtolower($z['area']);
-                if ($zAreaLower === $areaLower) {
-                    return $z;
-                }
-
-                // Check comma-separated tokens
-                $tokens = array_map('trim', explode(',', $zAreaLower));
-                foreach ($tokens as $token) {
-                    // Remove parens details like (Embakasi, Donholm) or (via Courier)
-                    $cleanToken = trim(preg_replace('/\s*\(.*?\)/', '', $token));
-                    if ($cleanToken === $areaLower || $token === $areaLower) {
-                        return $z;
-                    }
-                    if (str_contains($token, $areaLower) && strlen($areaLower) >= 3) {
-                        return $z;
-                    }
-                }
-
-                if (str_contains($zAreaLower, $areaLower) && strlen($areaLower) >= 3) {
-                    return $z;
-                }
+        $matches = [];
+        foreach ($zones as $zone) {
+            if (self::countyMatchesZone($county, $zone) && self::areaMatchesZone($area, $zone)) {
+                $matches[] = $zone;
             }
         }
 
-        // 3. Fallback: check across all zones if area is unique across all counties
-        foreach ($zones as $z) {
-            $zAreaLower = mb_strtolower($z['area']);
-            $tokens = array_map('trim', explode(',', $zAreaLower));
-            foreach ($tokens as $token) {
-                $cleanToken = trim(preg_replace('/\s*\(.*?\)/', '', $token));
-                if ($cleanToken === $areaLower || $token === $areaLower) {
-                    return $z;
-                }
-                if (str_contains($cleanToken, $areaLower) && strlen($areaLower) >= 3) {
-                    return $z;
-                }
+        return $matches;
+    }
+
+    /**
+     * Resolve the authoritative active delivery zone for a customer location.
+     *
+     * Invariants:
+     * 1. County and area must both be non-empty and validated together.
+     * 2. Exactly one distinct active delivery zone must match.
+     * 3. If multiple distinct zones match, throws DomainException for ambiguity.
+     * 4. If an inactive zone matches, throws DomainException stating the zone is inactive.
+     * 5. If no zone matches, throws DomainException stating delivery is unavailable.
+     * 6. If a client supplied a zone ID, it must match the authoritative zone ID or throw DomainException.
+     *
+     * @throws DomainException
+     */
+    public static function resolveAuthoritativeZone(string $county, string $area, ?int $suppliedZoneId = null): array
+    {
+        $county = trim($county);
+        $area = trim($area);
+
+        if ($county === '' || $area === '') {
+            throw new DomainException("Please select both your County and Area/Town for delivery.");
+        }
+
+        // 1. Search active matching zones
+        $activeMatches = self::findMatchingZones($county, $area, true);
+
+        // Check for multiple distinct active matches (ambiguity)
+        if (count($activeMatches) > 1) {
+            $uniqueIds = array_unique(array_map(fn($z) => (int)$z['id'], $activeMatches));
+            if (count($uniqueIds) > 1) {
+                throw new DomainException("Delivery location '{$county} - {$area}' is ambiguous as it matches multiple configured delivery zones. Please select a more specific area or neighborhood.");
             }
         }
 
-        return null;
+        if (empty($activeMatches)) {
+            // Check if matched an inactive zone
+            $allMatches = self::findMatchingZones($county, $area, false);
+            if (!empty($allMatches)) {
+                $inactiveZone = $allMatches[0];
+                throw new DomainException("The delivery zone for '{$inactiveZone['county']} - {$inactiveZone['area']}' is currently inactive. Please choose store pickup or contact support.");
+            }
+
+            throw new DomainException("Delivery is unavailable for '{$county} - {$area}'. Please choose a supported delivery area or select Store Pickup.");
+        }
+
+        $authoritativeZone = $activeMatches[0];
+
+        // 2. Validate client-supplied zone ID if provided (prevent client tampering)
+        if ($suppliedZoneId !== null && $suppliedZoneId > 0) {
+            if ((int)$authoritativeZone['id'] !== $suppliedZoneId) {
+                throw new DomainException("The provided delivery zone ID #{$suppliedZoneId} does not match the authoritative delivery zone for '{$county} - {$area}'. Delivery fee tampering was rejected.");
+            }
+        }
+
+        return $authoritativeZone;
+    }
+
+    /**
+     * Match a given county and area/neighborhood string to an active delivery zone.
+     * Safe wrapper around resolveAuthoritativeZone returning null on mismatch.
+     */
+    public static function matchZoneByLocation(string $county, string $area): ?array
+    {
+        try {
+            return self::resolveAuthoritativeZone($county, $area);
+        } catch (\Throwable $e) {
+            return null;
+        }
     }
 
     public static function createZone(array $data, int $actorId, string $ip): int

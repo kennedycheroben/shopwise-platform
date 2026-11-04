@@ -406,3 +406,61 @@ function paginate(int $totalItems, int $currentPage, int $perPage, string $baseU
         'base_url'     => $baseUrl,
     ];
 }
+
+/**
+ * Validate a personal name (first name, last name, recipient name).
+ *
+ * Strict security invariants:
+ * 1. Disallows HTML tags, script markup, and angle brackets (< and >).
+ * 2. Rejects control characters, ASCII 0-31, 127, and Unicode control categories (\p{C}).
+ * 3. Disallows script injection characters (=, ", `, ~, ;, :, |, \, /, {, }, [, ], (, ), *, +, ^, %, #, @, $, !).
+ * 4. Supports Unicode letters (\p{L}) for Kenyan and international names (e.g. Kipchoge, Ochieng', Mwangi, Renée, Müller).
+ * 5. Supports single spaces, hyphens, and standard (') or typographic (’) apostrophes between name tokens.
+ * 6. Bounds length to min 1 and max 100 characters (matching schema varchar(100)).
+ * 7. Never silently mutates/strips malicious markup; returns an explicit validation error.
+ *
+ * @param mixed $name
+ * @param string $fieldLabel
+ * @param int $minLength
+ * @param int $maxLength
+ * @return array{0: bool, 1: string|null} [isValid, errorMessage]
+ */
+function validate_person_name(mixed $name, string $fieldLabel = 'Name', int $minLength = 1, int $maxLength = 100): array
+{
+    if ($name === null || !is_string($name) || trim($name) === '') {
+        return [false, "{$fieldLabel} is required and cannot be empty."];
+    }
+
+    $trimmed = trim($name);
+
+    // Reject control characters and non-printable characters
+    if (preg_match('/[\x00-\x1F\x7F\p{C}]/u', $trimmed)) {
+        return [false, "{$fieldLabel} contains invalid control characters."];
+    }
+
+    // Explicitly reject HTML tags, script markers, or angle brackets
+    if (str_contains($trimmed, '<') || str_contains($trimmed, '>') || strip_tags($trimmed) !== $trimmed) {
+        return [false, "{$fieldLabel} contains invalid markup or HTML tags."];
+    }
+
+    // Reject dangerous special characters often used in script injection / XSS / SQLi
+    if (preg_match('/[="`~;:|\\\\\/{}\[\]\(\)\*\+\^%#@\$!]/u', $trimmed)) {
+        return [false, "{$fieldLabel} contains invalid special characters."];
+    }
+
+    $len = mb_strlen($trimmed, 'UTF-8');
+    if ($len < $minLength) {
+        return [false, "{$fieldLabel} must be at least {$minLength} character(s)."];
+    }
+    if ($len > $maxLength) {
+        return [false, "{$fieldLabel} cannot exceed {$maxLength} characters."];
+    }
+
+    // Must consist solely of Unicode letters, single spaces, hyphens, and apostrophes
+    // Supports e.g. "O'Connor", "Jean-Luc", "Mwangi", "Renée", "Ochieng'", "Al-Mansoor"
+    if (!preg_match('/^[\p{L}]+(?:[ \'\’\-][\p{L}]+)*[\'\’]?$/u', $trimmed)) {
+        return [false, "{$fieldLabel} can only contain letters, spaces, hyphens, and apostrophes."];
+    }
+
+    return [true, null];
+}

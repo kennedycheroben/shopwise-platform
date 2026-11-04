@@ -863,6 +863,7 @@ run_sql "
     VALUES ('admin', 'Phase3B', 'Tester', '$ADMIN_EMAIL', '$HASHED_PASS', '254711888999', 'active', NOW(), NOW());
 "
 ADMIN_USER_ID=$(run_sql "SELECT id FROM users WHERE email='$ADMIN_EMAIL';" | tail -n 1)
+run_sql "INSERT INTO user_roles (user_id, role, assigned_at) VALUES ($ADMIN_USER_ID, 'admin', NOW());"
 CREATED_USER_IDS+=("$ADMIN_USER_ID")
 
 # Login admin

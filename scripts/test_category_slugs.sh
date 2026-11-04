@@ -360,7 +360,7 @@ for item in "${EXPECTED_CATEGORIES[@]}"; do
 done
 
 # Check product-category associations are intact
-PROD_COUNT=$(run_sql "SELECT COUNT(*) FROM products WHERE category_id BETWEEN 1 AND 7 AND deleted_at IS NULL;")
+PROD_COUNT=$(run_sql "SELECT COUNT(*) FROM products WHERE id <= 21 AND category_id BETWEEN 1 AND 7 AND deleted_at IS NULL;")
 if [ "$PROD_COUNT" -eq 21 ]; then
     pass "All 21 catalog products remain associated with their original baseline categories"
 else

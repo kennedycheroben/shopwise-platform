@@ -82,6 +82,8 @@ done
 UPLOADS_TEST_DIR="$ROOT_DIR/public/uploads_test"
 mkdir -p "$UPLOADS_TEST_DIR/products"
 chmod 0755 "$UPLOADS_TEST_DIR" "$UPLOADS_TEST_DIR/products"
+setfacl -m u:daemon:rwx "$UPLOADS_TEST_DIR" "$UPLOADS_TEST_DIR/products" 2>/dev/null || true
+setfacl -m u:daemon:rwx "$ROOT_DIR/public/uploads" "$ROOT_DIR/public/uploads/products" 2>/dev/null || true
 
 # Protect uploads_test with strict .htaccess (prevent script execution)
 if [ -f "$ROOT_DIR/public/uploads/.htaccess" ]; then

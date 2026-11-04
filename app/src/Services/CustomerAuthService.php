@@ -168,6 +168,14 @@ final class CustomerAuthService
         if ($firstName === '' || $lastName === '') {
             return [false, 'Please provide both your first and last name.'];
         }
+        [$fnOk, $fnErr] = validate_person_name($firstName, 'First name');
+        if (!$fnOk) {
+            return [false, $fnErr];
+        }
+        [$lnOk, $lnErr] = validate_person_name($lastName, 'Last name');
+        if (!$lnOk) {
+            return [false, $lnErr];
+        }
         if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL) || strlen($email) > 191) {
             return [false, 'Please provide a valid email address.'];
         }
@@ -757,6 +765,14 @@ final class CustomerAuthService
 
         if ($firstName === '' || $lastName === '') {
             return [false, 'First and last name cannot be empty.'];
+        }
+        [$fnOk, $fnErr] = validate_person_name($firstName, 'First name');
+        if (!$fnOk) {
+            return [false, $fnErr];
+        }
+        [$lnOk, $lnErr] = validate_person_name($lastName, 'Last name');
+        if (!$lnOk) {
+            return [false, $lnErr];
         }
         if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL) || strlen($email) > 191) {
             return [false, 'Please provide a valid email address.'];

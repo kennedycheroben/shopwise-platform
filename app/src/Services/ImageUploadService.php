@@ -17,7 +17,11 @@ class ImageUploadService
 
     public function __construct(?string $baseUploadDir = null, int $maxBytes = 5242880, int $maxDimension = 6000) // 5MB, 6000px limit
     {
-        $this->baseUploadDir = $baseUploadDir ?? dirname(__DIR__, 3) . '/public/uploads/products';
+        if ($baseUploadDir === null) {
+            $config = require dirname(__DIR__, 2) . '/config/config.php';
+            $baseUploadDir = $config['uploads']['products_path'] ?? (dirname(__DIR__, 3) . '/public/uploads/products');
+        }
+        $this->baseUploadDir = $baseUploadDir;
         $this->maxBytes = $maxBytes;
         $this->maxDimension = $maxDimension;
     }
@@ -29,18 +33,37 @@ class ImageUploadService
     {
         $year = date('Y');
         $month = date('m');
-        $relativeDir = "uploads/products/{$year}/{$month}";
-        $absoluteDir = rtrim($this->baseUploadDir, '/') . "/{$year}/{$month}";
+        
+        $publicDir = dirname(__DIR__, 3) . '/public';
+        $normalizedBase = rtrim($this->baseUploadDir, '/');
+        if (str_starts_with($normalizedBase, $publicDir)) {
+            $relativeBase = ltrim(substr($normalizedBase, strlen($publicDir)), '/');
+        } else {
+            $relativeBase = 'uploads/products';
+        }
+        $relativeDir = "{$relativeBase}/{$year}/{$month}";
+        $absoluteDir = "{$normalizedBase}/{$year}/{$month}";
 
         if (!is_dir($absoluteDir)) {
-            if (!mkdir($absoluteDir, 0777, true) && !is_dir($absoluteDir)) {
-                throw new RuntimeException("Upload directory '{$absoluteDir}' could not be created. Please verify server directory permissions.");
+            if (!mkdir($absoluteDir, 0755, true) && !is_dir($absoluteDir)) {
+                throw new RuntimeException("Upload directory '{$absoluteDir}' could not be created. Please verify server directory permissions (0755).");
             }
-            @chmod($absoluteDir, 0777);
+            @chmod($absoluteDir, 0755);
+        }
+
+        // Verify directory is not world-writable for security
+        $perms = fileperms($absoluteDir);
+        if ($perms !== false && ($perms & 0002)) {
+            @chmod($absoluteDir, 0755);
+            clearstatcache(true, $absoluteDir);
+            $perms = fileperms($absoluteDir);
+            if ($perms !== false && ($perms & 0002)) {
+                throw new RuntimeException("Security violation: Upload directory '{$absoluteDir}' is world-writable. Directory must have restrictive 0755 permissions and be owned by the web server user (e.g. www-data or daemon).");
+            }
         }
 
         if (!is_writable($absoluteDir)) {
-            throw new RuntimeException("Upload directory '{$absoluteDir}' is not writable by the web server. Please ensure directory permissions are set to 0755 and owned by the web server user.");
+            throw new RuntimeException("Upload directory '{$absoluteDir}' is not writable by the web server. Please ensure directory permissions are set to 0755 and owned by the web server user (e.g. chown -R www-data:www-data or daemon:daemon).");
         }
 
         return [$relativeDir, $absoluteDir];
@@ -155,7 +178,9 @@ class ImageUploadService
         // Validate genuine MIME type via finfo
         $finfo = finfo_open(FILEINFO_MIME_TYPE);
         $mime = finfo_file($finfo, $file['tmp_name']);
-        finfo_close($finfo);
+        if (PHP_VERSION_ID < 80500 && is_resource($finfo)) {
+            @finfo_close($finfo);
+        }
 
         if (!in_array($mime, $this->allowedMimes, true)) {
             throw new RuntimeException("Invalid file type detected ({$mime}). Only genuine JPG, PNG, or WebP images are permitted.");
@@ -208,7 +233,9 @@ class ImageUploadService
         // Re-encode and save thumbnail
         $this->resizeAndSaveImage($sourceImage, $origWidth, $origHeight, $thumbWidth, $thumbDest, 80, $canWebp);
 
-        imagedestroy($sourceImage);
+        if (PHP_VERSION_ID < 80500) {
+            @imagedestroy($sourceImage);
+        }
 
         // Safety verification: confirm newly written files contain no PHP tags
         $this->assertNoExecutablePayload($mainDest);
@@ -255,7 +282,9 @@ class ImageUploadService
             imagejpeg($canvas, $destPath, $quality);
         }
 
-        imagedestroy($canvas);
+        if (PHP_VERSION_ID < 80500) {
+            @imagedestroy($canvas);
+        }
 
         if (!file_exists($destPath) || filesize($destPath) === 0) {
             throw new RuntimeException("Failed to write image file to disk: {$destPath}");

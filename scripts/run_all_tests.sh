@@ -123,6 +123,7 @@ TMP_OUT_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_OUT_DIR" "$PRE_CHECKSUMS_FILE"' EXIT
 
 OVERALL_STATUS=0
+declare -A SUITE_EXITS
 
 export BASE_URL="http://127.0.0.1/shopwise-platform/public"
 export DB_NAME="$TEST_DB"
@@ -131,6 +132,7 @@ export SHOPWISE_CONFIG="testing"
 run_suite() {
     local name="$1"
     local script="$2"
+    local runner="${3:-bash}"
     local log_file="$TMP_OUT_DIR/${name}.log"
 
     echo -e "${BOLD}--- Running Suite: $name ($script) ---${NC}"
@@ -138,16 +140,24 @@ run_suite() {
     start_time=$(date +%s)
 
     set +e
-    BASE_URL="http://127.0.0.1/shopwise-platform/public" DB_NAME="$TEST_DB" SHOPWISE_CONFIG="testing" bash "$script" > "$log_file" 2>&1
+    if [ "$runner" = "php" ]; then
+        BASE_URL="http://127.0.0.1/shopwise-platform/public" DB_NAME="$TEST_DB" SHOPWISE_CONFIG="testing" "$PHP_CMD" "$script" > "$log_file" 2>&1
+    elif [ "$runner" = "python3" ]; then
+        BASE_URL="http://127.0.0.1/shopwise-platform/public" DB_NAME="$TEST_DB" SHOPWISE_CONFIG="testing" python3 "$script" > "$log_file" 2>&1
+    else
+        BASE_URL="http://127.0.0.1/shopwise-platform/public" DB_NAME="$TEST_DB" SHOPWISE_CONFIG="testing" bash "$script" > "$log_file" 2>&1
+    fi
     local exit_code=$?
     set -e
+
+    SUITE_EXITS["$name"]=$exit_code
 
     local duration=$(( $(date +%s) - start_time ))
     echo "  Completed in ${duration}s (Exit code: $exit_code)"
 
     if [ "$exit_code" -ne 0 ]; then
         OVERALL_STATUS=1
-        echo -e "  [${RED}FAIL${NC}] Suite $name failed. Last 15 lines of log:"
+        echo -e "  [${RED}FAIL${NC}] Suite $name failed (Exit code: $exit_code). Last 15 lines of log:"
         tail -n 15 "$log_file" | sed 's/^/    /'
     fi
 }
@@ -164,19 +174,13 @@ run_suite "prove_csrf"       "scripts/prove_csrf.sh"
 run_suite "category_slugs"   "scripts/test_category_slugs.sh"
 run_suite "delivery_pricing" "scripts/test_delivery_pricing.sh"
 run_suite "customer_reply"   "scripts/test_customer_support_reply.sh"
+run_suite "rbac_revocation"  "scripts/test_rbac_revocation_regression.sh"
+run_suite "upload_security"  "scripts/test_upload_security.php" "php"
+run_suite "route_guard"      "scripts/test_test_route_guard.php" "php"
+run_suite "browser_marketing" "scripts/test_browser_marketing.sh"
+run_suite "uat_15_steps"     "scripts/uat_15_steps.sh"
+run_suite "stock_parity"     "scripts/check_stock_parity.py" "python3"
 
-echo -e "${BOLD}--- Running Suite: check_stock_parity.py ---${NC}"
-PARITY_LOG="$TMP_OUT_DIR/stock_parity.log"
-set +e
-SHOPWISE_CONFIG="testing" python3 scripts/check_stock_parity.py > "$PARITY_LOG" 2>&1
-PARITY_EXIT=$?
-set -e
-if [ "$PARITY_EXIT" -ne 0 ]; then
-    OVERALL_STATUS=1
-    echo -e "  [${RED}FAIL${NC}] check_stock_parity.py failed. Output:"
-    cat "$PARITY_LOG" | sed 's/^/    /'
-fi
-echo "  Completed (Exit code: $PARITY_EXIT)"
 echo ""
 
 # ------------------------------------------------------------------------------
@@ -184,105 +188,73 @@ echo ""
 # ------------------------------------------------------------------------------
 parse_2afix() {
     local log="$TMP_OUT_DIR/acceptance_2afix.log"
-    local clean_text
-    clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
-    local passed failed
-    passed=$(echo "$clean_text" | grep -oP 'Passed:\s*\K[0-9]+' | tail -n 1 || echo 0)
-    failed=$(echo "$clean_text" | grep -oP 'Failed:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
+    local passed=$(echo "$clean_text" | grep -oP 'Passed:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local failed=$(echo "$clean_text" | grep -oP 'Failed:\s*\K[0-9]+' | tail -n 1 || echo 0)
     echo "${passed:-0} ${failed:-0}"
 }
 
 parse_2b() {
     local log="$TMP_OUT_DIR/acceptance_2b.log"
-    local clean_text
-    clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
-    local passed failed
-    passed=$(echo "$clean_text" | grep -oP 'Total Passed:\s*\K[0-9]+' | tail -n 1 || echo 0)
-    failed=$(echo "$clean_text" | grep -oP 'Total Failed:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
+    local passed=$(echo "$clean_text" | grep -oP 'Total Passed:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local failed=$(echo "$clean_text" | grep -oP 'Total Failed:\s*\K[0-9]+' | tail -n 1 || echo 0)
     echo "${passed:-0} ${failed:-0}"
 }
 
 parse_2c1() {
     local log="$TMP_OUT_DIR/acceptance_2c1.log"
-    local clean_text
-    clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
-    local passed failed
-    passed=$(echo "$clean_text" | grep -oP 'SUMMARY: Passed:\s*\K[0-9]+' | tail -n 1 || echo 0)
-    failed=$(echo "$clean_text" | grep -oP 'Failed:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
+    local passed=$(echo "$clean_text" | grep -oP 'SUMMARY: Passed:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local failed=$(echo "$clean_text" | grep -oP 'Failed:\s*\K[0-9]+' | tail -n 1 || echo 0)
     echo "${passed:-0} ${failed:-0}"
 }
 
 parse_2c2() {
     local log="$TMP_OUT_DIR/acceptance_2c2.log"
-    local clean_text
-    clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
-    local passed failed
-    passed=$(echo "$clean_text" | grep -oP 'Passed:\s*\K[0-9]+' | tail -n 1 || echo 0)
-    failed=$(echo "$clean_text" | grep -oP 'Failed:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
+    local passed=$(echo "$clean_text" | grep -oP 'Passed:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local failed=$(echo "$clean_text" | grep -oP 'Failed:\s*\K[0-9]+' | tail -n 1 || echo 0)
     echo "${passed:-0} ${failed:-0}"
 }
 
 parse_3a() {
     local log="$TMP_OUT_DIR/acceptance_3a.log"
-    local clean_text
-    clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
-    local passed failed
-    passed=$(echo "$clean_text" | grep -oP 'Passed:\s*\K[0-9]+' | tail -n 1 || echo 0)
-    failed=$(echo "$clean_text" | grep -oP 'Failed:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
+    local passed=$(echo "$clean_text" | grep -oP 'Passed:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local failed=$(echo "$clean_text" | grep -oP 'Failed:\s*\K[0-9]+' | tail -n 1 || echo 0)
     echo "${passed:-0} ${failed:-0}"
 }
 
 parse_3b() {
     local log="$TMP_OUT_DIR/acceptance_3b.log"
-    local clean_text
-    clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
-    local passed failed
-    passed=$(echo "$clean_text" | grep -oP 'Passed:\s*\K[0-9]+' | tail -n 1 || echo 0)
-    failed=$(echo "$clean_text" | grep -oP 'Failed:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
+    local passed=$(echo "$clean_text" | grep -oP 'Passed:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local failed=$(echo "$clean_text" | grep -oP 'Failed:\s*\K[0-9]+' | tail -n 1 || echo 0)
     echo "${passed:-0} ${failed:-0}"
 }
 
 parse_4() {
     local log="$TMP_OUT_DIR/acceptance_4.log"
-    local clean_text
-    clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
-    local passed failed
-    passed=$(echo "$clean_text" | grep -oP 'Passed:\s*\K[0-9]+' | tail -n 1 || echo 0)
-    failed=$(echo "$clean_text" | grep -oP 'Failed:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
+    local passed=$(echo "$clean_text" | grep -oP 'Passed:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local failed=$(echo "$clean_text" | grep -oP 'Failed:\s*\K[0-9]+' | tail -n 1 || echo 0)
     echo "${passed:-0} ${failed:-0}"
 }
 
 parse_5() {
     local log="$TMP_OUT_DIR/acceptance_5.log"
-    local clean_text
-    clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
-    local passed failed
-    passed=$(echo "$clean_text" | grep -oP 'Phase 5 Test Summary:\s*Passed:\s*\K[0-9]+' | tail -n 1 || echo 0)
-    failed=$(echo "$clean_text" | grep -oP 'Failed:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
+    local passed=$(echo "$clean_text" | grep -oP 'Phase 5 Test Summary:\s*Passed:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local failed=$(echo "$clean_text" | grep -oP 'Failed:\s*\K[0-9]+' | tail -n 1 || echo 0)
     echo "${passed:-0} ${failed:-0}"
-}
-
-parse_parity() {
-    local log="$TMP_OUT_DIR/stock_parity.log"
-    local clean_text
-    clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
-    local variants disc
-    variants=$(echo "$clean_text" | grep -oP 'Total variants evaluated:\s*\K[0-9]+' | tail -n 1 || echo 0)
-    disc=$(echo "$clean_text" | grep -oP 'Ledger Discrepancies:\s*\K[0-9]+' | tail -n 1 || echo 0)
-    if [ "$PARITY_EXIT" -eq 0 ] && [ "${disc:-1}" -eq 0 ]; then
-        echo "${variants:-0} 0"
-    else
-        echo "0 ${variants:-1}"
-    fi
 }
 
 parse_csrf() {
     local log="$TMP_OUT_DIR/prove_csrf.log"
-    local clean_text
-    clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
-    local total
-    total=$(echo "$clean_text" | grep -oP 'SUCCESS: ALL \K[0-9]+' | tail -n 1 || echo 0)
-    if echo "$clean_text" | grep -q "SUCCESS: ALL"; then
+    local clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
+    local total=$(echo "$clean_text" | grep -oP 'SUCCESS: ALL \K[0-9]+' | tail -n 1 || echo 0)
+    if [ "${SUITE_EXITS["prove_csrf"]:-1}" -eq 0 ] && echo "$clean_text" | grep -q "SUCCESS: ALL"; then
         echo "${total:-0} 0"
     else
         echo "0 1"
@@ -291,71 +263,142 @@ parse_csrf() {
 
 parse_slugs() {
     local log="$TMP_OUT_DIR/category_slugs.log"
-    local clean_text
-    clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
-    local passed failed
-    passed=$(echo "$clean_text" | grep -oP 'CATEGORY SLUG TEST SUMMARY:\s*\K[0-9]+' | tail -n 1 || echo 0)
-    failed=$(echo "$clean_text" | grep -oP 'Passed,\s*\K[0-9]+(?=\s*Failed)' | tail -n 1 || echo 0)
+    local clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
+    local passed=$(echo "$clean_text" | grep -oP 'CATEGORY SLUG TEST SUMMARY:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local failed=$(echo "$clean_text" | grep -oP 'Passed,\s*\K[0-9]+(?=\s*Failed)' | tail -n 1 || echo 0)
     echo "${passed:-0} ${failed:-0}"
 }
 
 parse_delivery() {
     local log="$TMP_OUT_DIR/delivery_pricing.log"
-    local clean_text
-    clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
-    local passed failed
-    passed=$(echo "$clean_text" | grep -oP 'Delivery Pricing Tests:\s*\K[0-9]+' | tail -n 1 || echo 0)
-    failed=$(echo "$clean_text" | grep -oP 'passed,\s*\K[0-9]+(?=\s*failed)' | tail -n 1 || echo 0)
+    local clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
+    local passed=$(echo "$clean_text" | grep -oP 'Delivery Pricing Tests:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local failed=$(echo "$clean_text" | grep -oP 'passed,\s*\K[0-9]+(?=\s*failed)' | tail -n 1 || echo 0)
     echo "${passed:-0} ${failed:-0}"
 }
 
 parse_reply() {
     local log="$TMP_OUT_DIR/customer_reply.log"
-    local clean_text
-    clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
-    local passed failed
-    passed=$(echo "$clean_text" | grep -oP 'Customer Support Reply Tests:\s*\K[0-9]+' | tail -n 1 || echo 0)
-    failed=$(echo "$clean_text" | grep -oP 'passed,\s*\K[0-9]+(?=\s*failed)' | tail -n 1 || echo 0)
+    local clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
+    local passed=$(echo "$clean_text" | grep -oP 'Customer Support Reply Tests:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local failed=$(echo "$clean_text" | grep -oP 'passed,\s*\K[0-9]+(?=\s*failed)' | tail -n 1 || echo 0)
     echo "${passed:-0} ${failed:-0}"
 }
 
-read -r P_2A F_2A < <(parse_2afix)
-read -r P_2B F_2B < <(parse_2b)
-read -r P_2C1 F_2C1 < <(parse_2c1)
-read -r P_2C2 F_2C2 < <(parse_2c2)
-read -r P_3A F_3A < <(parse_3a)
-read -r P_3B F_3B < <(parse_3b)
-read -r P_4 F_4 < <(parse_4)
-read -r P_5 F_5 < <(parse_5)
-read -r P_CSRF F_CSRF < <(parse_csrf)
-read -r P_SLUG F_SLUG < <(parse_slugs)
-read -r P_DELIV F_DELIV < <(parse_delivery)
-read -r P_REPLY F_REPLY < <(parse_reply)
-read -r P_PAR F_PAR < <(parse_parity)
+parse_rbac() {
+    local log="$TMP_OUT_DIR/rbac_revocation.log"
+    local clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
+    local passed=$(echo "$clean_text" | grep -oP 'RBAC Revocation Invariant Tests:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local failed=$(echo "$clean_text" | grep -oP 'passed,\s*\K[0-9]+(?=\s*failed)' | tail -n 1 || echo 0)
+    echo "${passed:-0} ${failed:-0}"
+}
 
-TOTAL_PASSED=$((P_2A + P_2B + P_2C1 + P_2C2 + P_3A + P_3B + P_4 + P_5 + P_CSRF + P_SLUG + P_DELIV + P_REPLY + P_PAR))
-TOTAL_FAILED=$((F_2A + F_2B + F_2C1 + F_2C2 + F_3A + F_3B + F_4 + F_5 + F_CSRF + F_SLUG + F_DELIV + F_REPLY + F_PAR))
+parse_upload_sec() {
+    local log="$TMP_OUT_DIR/upload_security.log"
+    local clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
+    local passed=$(echo "$clean_text" | grep -oP 'Summary:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local total=$(echo "$clean_text" | grep -oP 'Summary:\s*[0-9]+\s*/\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local failed=$((total - passed))
+    echo "${passed:-0} ${failed:-0}"
+}
+
+parse_route_guard() {
+    local log="$TMP_OUT_DIR/route_guard.log"
+    local clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
+    local passed=$(echo "$clean_text" | grep -oP 'Summary:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local total=$(echo "$clean_text" | grep -oP 'Summary:\s*[0-9]+\s*/\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local failed=$((total - passed))
+    echo "${passed:-0} ${failed:-0}"
+}
+
+parse_browser_marketing() {
+    local log="$TMP_OUT_DIR/browser_marketing.log"
+    if [ "${SUITE_EXITS["browser_marketing"]:-1}" -eq 0 ] && grep -q "ALL BROWSER VERIFICATION CHECKS PASSED" "$log"; then
+        echo "7 0"
+    else
+        echo "0 1"
+    fi
+}
+
+parse_uat() {
+    local log="$TMP_OUT_DIR/uat_15_steps.log"
+    local clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
+    local passed=$(grep -c "\[PASS\] Step" "$log" || echo 0)
+    if [ "${SUITE_EXITS["uat_15_steps"]:-1}" -eq 0 ]; then
+        echo "${passed:-15} 0"
+    else
+        echo "${passed:-0} 1"
+    fi
+}
+
+parse_parity() {
+    local log="$TMP_OUT_DIR/stock_parity.log"
+    local clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
+    local variants=$(echo "$clean_text" | grep -oP 'Total variants evaluated:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local disc=$(echo "$clean_text" | grep -oP 'Ledger Discrepancies:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    if [ "${SUITE_EXITS["stock_parity"]:-1}" -eq 0 ] && [ "${disc:-1}" -eq 0 ]; then
+        echo "${variants:-0} 0"
+    else
+        echo "0 ${variants:-1}"
+    fi
+}
 
 echo -e "${BOLD}${CYAN}==============================================================================${NC}"
 echo -e "${BOLD}${CYAN}                       TEST SUITE EXECUTION SUMMARY                           ${NC}"
 echo -e "${BOLD}${CYAN}==============================================================================${NC}"
-printf "%-30s | %-12s | %-12s | %-10s\n" "Test Suite / Script" "Passed" "Failed" "Status"
-echo "-------------------------------+--------------+--------------+------------"
-printf "%-30s | %-12s | %-12s | %-10s\n" "acceptance_2afix.sh" "$P_2A" "$F_2A" "$([ "$F_2A" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
-printf "%-30s | %-12s | %-12s | %-10s\n" "acceptance_2b.sh"    "$P_2B" "$F_2B" "$([ "$F_2B" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
-printf "%-30s | %-12s | %-12s | %-10s\n" "acceptance_2c1.sh"   "$P_2C1" "$F_2C1" "$([ "$F_2C1" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
-printf "%-30s | %-12s | %-12s | %-10s\n" "acceptance_2c2.sh"   "$P_2C2" "$F_2C2" "$([ "$F_2C2" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
-printf "%-30s | %-12s | %-12s | %-10s\n" "acceptance_3a.sh"    "$P_3A" "$F_3A" "$([ "$F_3A" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
-printf "%-30s | %-12s | %-12s | %-10s\n" "acceptance_3b.sh"    "$P_3B" "$F_3B" "$([ "$F_3B" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
-printf "%-30s | %-12s | %-12s | %-10s\n" "acceptance_4.sh"     "$P_4" "$F_4" "$([ "$F_4" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
-printf "%-30s | %-12s | %-12s | %-10s\n" "acceptance_5.sh"     "$P_5" "$F_5" "$([ "$F_5" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
-printf "%-30s | %-12s | %-12s | %-10s\n" "prove_csrf.sh"       "$P_CSRF" "$F_CSRF" "$([ "$F_CSRF" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
-printf "%-30s | %-12s | %-12s | %-10s\n" "test_category_slugs" "$P_SLUG" "$F_SLUG" "$([ "$F_SLUG" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
-printf "%-30s | %-12s | %-12s | %-10s\n" "test_delivery_pricing" "$P_DELIV" "$F_DELIV" "$([ "$F_DELIV" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
-printf "%-30s | %-12s | %-12s | %-10s\n" "test_customer_reply" "$P_REPLY" "$F_REPLY" "$([ "$F_REPLY" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
-printf "%-30s | %-12s | %-12s | %-10s\n" "check_stock_parity.py" "$P_PAR" "$F_PAR" "$([ "$F_PAR" -eq 0 ] && echo -e "${GREEN}PASS${NC}" || echo -e "${RED}FAIL${NC}")"
-echo "-------------------------------+--------------+--------------+------------"
-printf "%-30s | %-12s | %-12s | %-10s\n" "TOTAL" "$TOTAL_PASSED" "$TOTAL_FAILED" "$([ "$TOTAL_FAILED" -eq 0 ] && echo -e "${GREEN}ALL PASS${NC}" || echo -e "${RED}FAILURES${NC}")"
+printf "%-32s | %-8s | %-8s | %-10s | %-10s\n" "Test Suite / Script" "Passed" "Failed" "Exit Code" "Status"
+echo "---------------------------------+----------+----------+------------+------------"
+
+TOTAL_PASSED=0
+TOTAL_FAILED=0
+
+report_row() {
+    local name="$1"
+    local title="$2"
+    local parse_fn="$3"
+
+    local p f
+    read -r p f < <("$parse_fn")
+    local exit_code="${SUITE_EXITS[$name]:-0}"
+
+    if [ "$exit_code" -ne 0 ]; then
+        if [ "$f" -eq 0 ]; then
+            f=1
+        fi
+        OVERALL_STATUS=1
+        printf "%-32s | %-8s | %-8s | %-10s | %b\n" "$title" "$p" "$f" "$exit_code" "${RED}FAIL${NC}"
+    elif [ "$f" -gt 0 ]; then
+        OVERALL_STATUS=1
+        printf "%-32s | %-8s | %-8s | %-10s | %b\n" "$title" "$p" "$f" "$exit_code" "${RED}FAIL${NC}"
+    else
+        printf "%-32s | %-8s | %-8s | %-10s | %b\n" "$title" "$p" "$f" "$exit_code" "${GREEN}PASS${NC}"
+    fi
+
+    TOTAL_PASSED=$((TOTAL_PASSED + p))
+    TOTAL_FAILED=$((TOTAL_FAILED + f))
+}
+
+report_row "acceptance_2afix" "acceptance_2afix.sh" parse_2afix
+report_row "acceptance_2b"    "acceptance_2b.sh"    parse_2b
+report_row "acceptance_2c1"   "acceptance_2c1.sh"   parse_2c1
+report_row "acceptance_2c2"   "acceptance_2c2.sh"   parse_2c2
+report_row "acceptance_3a"    "acceptance_3a.sh"    parse_3a
+report_row "acceptance_3b"    "acceptance_3b.sh"    parse_3b
+report_row "acceptance_4"     "acceptance_4.sh"     parse_4
+report_row "acceptance_5"     "acceptance_5.sh"     parse_5
+report_row "prove_csrf"       "prove_csrf.sh"       parse_csrf
+report_row "category_slugs"   "test_category_slugs" parse_slugs
+report_row "delivery_pricing" "test_delivery_pricing" parse_delivery
+report_row "customer_reply"   "test_customer_reply" parse_reply
+report_row "rbac_revocation"  "test_rbac_revocation" parse_rbac
+report_row "upload_security"  "test_upload_security" parse_upload_sec
+report_row "route_guard"      "test_route_guard"    parse_route_guard
+report_row "browser_marketing" "browser_marketing"   parse_browser_marketing
+report_row "uat_15_steps"     "uat_15_steps.sh"     parse_uat
+report_row "stock_parity"     "check_stock_parity"  parse_parity
+
+echo "---------------------------------+----------+----------+------------+------------"
+printf "%-32s | %-8s | %-8s | %-10s | %b\n" "TOTAL" "$TOTAL_PASSED" "$TOTAL_FAILED" "-" "$([ "$TOTAL_FAILED" -eq 0 ] && [ "$OVERALL_STATUS" -eq 0 ] && echo -e "${GREEN}ALL PASS${NC}" || echo -e "${RED}FAILURES${NC}")"
 echo ""
 
 # ------------------------------------------------------------------------------

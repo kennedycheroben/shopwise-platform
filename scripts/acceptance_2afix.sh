@@ -111,6 +111,7 @@ fi
 ADMIN_HASH=$("$PHP_BIN" -r "echo password_hash('$ADMIN_PASSWORD', PASSWORD_DEFAULT);")
 run_sql "INSERT INTO users (role, first_name, last_name, email, password_hash, status, created_at, email_verified_at) VALUES ('admin', 'TestAdmin', '2AFix', '$ADMIN_EMAIL', '$ADMIN_HASH', 'active', NOW(), NOW());"
 ADMIN_USER_ID=$(run_sql "SELECT id FROM users WHERE email='$ADMIN_EMAIL' LIMIT 1;" | tail -n 1)
+run_sql "INSERT INTO user_roles (user_id, role, assigned_at) VALUES ($ADMIN_USER_ID, 'admin', NOW());"
 CUST_USER_ID=""
 STAFF_USER_ID=""
 
@@ -525,6 +526,7 @@ if [ "$DB_AVAILABLE" -eq 1 ]; then
     # Ensure user exists as active staff
     run_sql "INSERT INTO users (role, first_name, last_name, email, password_hash, status, created_at) VALUES ('staff', 'Staff', 'Tester', '$STAFF_EMAIL', '$STAFF_HASH', 'active', NOW());"
     STAFF_USER_ID=$(run_sql "SELECT id FROM users WHERE email='$STAFF_EMAIL' LIMIT 1;" | tail -n 1)
+    run_sql "INSERT INTO user_roles (user_id, role, assigned_at) VALUES ($STAFF_USER_ID, 'staff', NOW());"
 
     STAFF_JAR=$(mktemp)
     fetch_url "$BASE_URL/admin/login.php" "$STAFF_JAR"

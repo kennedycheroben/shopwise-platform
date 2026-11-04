@@ -90,6 +90,43 @@ PHP;
         echo "  [FAIL] Simulated production output: $output (expected NOT_FOUND_404)\n";
     }
 
+    // Test 4: Verify /test/cleanup-test-uploads is NOT registered on localhost (returns 404)
+    $testsTotal++;
+    $outCleanupLocalhost = exec('curl -s -X POST -o /dev/null -w "%{http_code}" http://localhost/shopwise-platform/public/test/cleanup-test-uploads');
+    if ($outCleanupLocalhost === '404') {
+        echo "  [PASS] http://localhost/test/cleanup-test-uploads returns HTTP 404 (route not registered)\n";
+        $testsPassed++;
+    } else {
+        echo "  [FAIL] http://localhost/test/cleanup-test-uploads returned HTTP $outCleanupLocalhost (expected 404)\n";
+    }
+
+    // Test 5: Verify /test/cleanup-test-uploads works in local test mode on 127.0.0.1
+    $testsTotal++;
+    // Put a dummy file in uploads_test/products
+    $dummyFile = dirname(__DIR__) . '/public/uploads_test/products/guard_test_dummy.webp';
+    file_put_contents($dummyFile, 'dummy test content');
+    $cleanupResp = shell_exec('curl -s -X POST http://127.0.0.1/shopwise-platform/public/test/cleanup-test-uploads');
+    $cleanupJson = json_decode($cleanupResp, true);
+    if (!empty($cleanupJson['success']) && !file_exists($dummyFile)) {
+        echo "  [PASS] http://127.0.0.1/test/cleanup-test-uploads strictly deletes test uploads and returns success\n";
+        $testsPassed++;
+    } else {
+        echo "  [FAIL] http://127.0.0.1/test/cleanup-test-uploads failed: $cleanupResp\n";
+    }
+
+    // Test 6: Verify production public/uploads/products is NEVER cleared by cleanup endpoint
+    $testsTotal++;
+    $prodCanary = dirname(__DIR__) . '/public/uploads/products/canary_prod_file.test';
+    file_put_contents($prodCanary, 'production canary');
+    shell_exec('curl -s -X POST http://127.0.0.1/shopwise-platform/public/test/cleanup-test-uploads >/dev/null 2>&1');
+    if (file_exists($prodCanary)) {
+        unlink($prodCanary);
+        echo "  [PASS] Production directory public/uploads/products is untouched by test cleanup endpoint\n";
+        $testsPassed++;
+    } else {
+        echo "  [FAIL] Production canary was deleted! Test cleanup leaked into production uploads!\n";
+    }
+
     echo "\nSummary: $testsPassed / $testsTotal tests passed.\n";
     exit($testsPassed === $testsTotal ? 0 : 1);
 }

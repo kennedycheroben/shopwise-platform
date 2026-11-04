@@ -234,7 +234,7 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
                                             </li>
                                             <?php if (!$isSelf): ?>
                                                 <li>
-                                                    <form method="POST" action="<?= e(url('admin/staff/')) ?>" onsubmit="return confirm('Change status for <?= e($s['first_name']) ?>?');">
+                                                    <form method="POST" action="<?= e(url('admin/staff/')) ?>" onsubmit="return confirm('Change status for ' + <?= json_encode((string)$s['first_name'], JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?> + '?');">
                                                         <?= csrf_field() ?>
                                                         <input type="hidden" name="action" value="toggle_status">
                                                         <input type="hidden" name="id" value="<?= e($s['id']) ?>">

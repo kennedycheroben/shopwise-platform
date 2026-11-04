@@ -330,24 +330,18 @@ final class Permissions
                     return array_values(array_unique($roles));
                 }
 
-                // If user has zero roles in user_roles, check primary role on users table
+                // If user has zero roles in user_roles, check if user is a retail customer
                 $stmt2 = $pdo->prepare("SELECT role FROM users WHERE id = :uid LIMIT 1");
                 $stmt2->execute([':uid' => $userId]);
                 $primaryRole = $stmt2->fetchColumn();
-
-                if ($primaryRole && self::isAdminRole($primaryRole)) {
-                    // Sync legacy / direct-insert users into user_roles table
-                    try {
-                        $syncStmt = $pdo->prepare("INSERT IGNORE INTO user_roles (user_id, role, assigned_at) VALUES (:uid, :r, NOW())");
-                        $syncStmt->execute([':uid' => $userId, ':r' => $primaryRole]);
-                    } catch (\Throwable $e) {}
-                    return [$primaryRole];
-                }
 
                 if ($primaryRole === 'customer') {
                     return ['customer'];
                 }
 
+                // Strict RBAC security invariant:
+                // If users.role still contains an old admin/staff role, but user_roles has 0 records,
+                // the administrative role was explicitly revoked! Stale users.role MUST NOT restore privileges!
                 return [];
             }
 

@@ -147,6 +147,15 @@ final class StaffService
             throw new InvalidArgumentException("First and last names are required.");
         }
 
+        [$fnOk, $fnErr] = validate_person_name($firstName, 'First name');
+        if (!$fnOk) {
+            throw new InvalidArgumentException($fnErr);
+        }
+        [$lnOk, $lnErr] = validate_person_name($lastName, 'Last name');
+        if (!$lnOk) {
+            throw new InvalidArgumentException($lnErr);
+        }
+
         if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
             throw new InvalidArgumentException("A valid work email address is required.");
         }
@@ -257,6 +266,15 @@ final class StaffService
 
         if ($firstName === '' || $lastName === '') {
             throw new InvalidArgumentException("First and last names are required.");
+        }
+
+        [$fnOk, $fnErr] = validate_person_name($firstName, 'First name');
+        if (!$fnOk) {
+            throw new InvalidArgumentException($fnErr);
+        }
+        [$lnOk, $lnErr] = validate_person_name($lastName, 'Last name');
+        if (!$lnOk) {
+            throw new InvalidArgumentException($lnErr);
         }
 
         // Resolve requested roles

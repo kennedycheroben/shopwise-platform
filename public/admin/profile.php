@@ -45,8 +45,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $first = trim($_POST['first_name'] ?? '');
             $last = trim($_POST['last_name'] ?? '');
 
-            if ($first === '' || $last === '') {
-                $error = 'First name and last name are both required.';
+            [$fnOk, $fnErr] = validate_person_name($first, 'First name');
+            [$lnOk, $lnErr] = validate_person_name($last, 'Last name');
+
+            if (!$fnOk) {
+                $error = $fnErr;
+            } elseif (!$lnOk) {
+                $error = $lnErr;
             } else {
                 $upd = $pdo->prepare('UPDATE users SET first_name = :first, last_name = :last WHERE id = :id');
                 $upd->execute([

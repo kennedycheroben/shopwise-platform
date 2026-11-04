@@ -174,7 +174,7 @@ UNKNOWN_RESP=$(curl -s -b "$COOKIE_JAR" -c "$COOKIE_JAR" -X POST "$BASE_URL/chec
   -H "X-Requested-With: XMLHttpRequest" \
   -d '{"delivery_method":"delivery","county":"Marsabit","area":"Moyale Outskirts"}')
 
-if echo "$UNKNOWN_RESP" | grep -q "Delivery is unavailable for Marsabit"; then
+if echo "$UNKNOWN_RESP" | grep -q "Delivery is unavailable" && echo "$UNKNOWN_RESP" | grep -q "Marsabit"; then
     pass "Unsupported location is rejected with clear error message (never silently KES 0)"
 else
     fail "Unsupported location did not return expected error message: $UNKNOWN_RESP"
@@ -205,11 +205,12 @@ fi
 run_sql "DELETE FROM delivery_zones WHERE id = $INACTIVE_ZONE_ID;"
 
 # ------------------------------------------------------------------------------
-# TEST GROUP 6: Client-Side Price & Zone Tampering Defense
+# TEST GROUP 6: Client-Side Price & Forged Zone Manipulation Defense
 # ------------------------------------------------------------------------------
 echo ""
-echo "--- Group 6: Client-Side Price & Zone Manipulation Defense ---"
+echo "--- Group 6: Client-Side Price & Forged Zone Manipulation Defense ---"
 
+# 6a. Forged Zone ID is strictly rejected by server-side validation
 SHOPWISE_CONFIG=testing php -r '
 require "app/bootstrap.php";
 use App\Services\OrderService;
@@ -221,43 +222,114 @@ $v = $pdo->query("SELECT id FROM product_variants WHERE is_active=1 AND stock_qt
 $cartService->addItem((int)$v, 1);
 $cartData = $cartService->getCartDetails();
 
-// Attacker sends Mombasa location but crafts zone_id=1 (Nairobi CBD KES 150) and fee=0
-$county = "Other Major Towns";
-$area = "Mombasa";
-$clientCraftedZoneId = 1; // Nairobi CBD
-$matched = DeliveryService::matchZoneByLocation($county, $area);
-if ($matched && (int)$matched["id"] !== $clientCraftedZoneId) {
-    $resolvedZoneId = (int)$matched["id"];
-} else {
-    $resolvedZoneId = $clientCraftedZoneId;
-}
-
+// Attacker sends Mombasa location but explicitly crafts zone_id=1 (Nairobi CBD KES 150)
 $tamperedChoices = [
     "delivery_method" => "delivery",
     "recipient_name"  => "Tamper Tester",
     "phone"           => "0712345678",
-    "county"          => $county,
-    "area"            => $area,
+    "county"          => "Other Major Towns",
+    "area"            => "Mombasa",
     "street_details"  => "Moi Avenue, Mombasa",
-    "zone_id"         => $resolvedZoneId,
-    "delivery_fee"    => 0.0, // Attempted price override!
-    "total"           => 1.0, // Attempted total override!
+    "zone_id"         => 1, // Deliberate mismatch: Zone 1 is Nairobi CBD, but location is Mombasa!
 ];
 
-$token = "tamper_test_" . bin2hex(random_bytes(8));
+$token = "forged_zone_" . bin2hex(random_bytes(8));
 try {
-    $order = OrderService::createFromCart($cartData, $tamperedChoices, 1, $token, "127.0.0.1");
-    if ((float)$order["delivery_fee"] === 600.0) {
-        echo "TAMPER_DEFENSE_OK\n";
+    OrderService::createFromCart($cartData, $tamperedChoices, 1, $token, "127.0.0.1");
+    echo "FORGED_ZONE_ACCEPTED_ERROR\n";
+    exit(1);
+} catch (\DomainException $de) {
+    if (str_contains($de->getMessage(), "does not match the authoritative delivery zone") || str_contains($de->getMessage(), "Tampering detected")) {
+        echo "FORGED_ZONE_REJECTED_OK\n";
     } else {
-        echo "TAMPER_DEFENSE_FAILED: delivery_fee is " . $order["delivery_fee"] . "\n";
+        echo "UNEXPECTED_EXCEPTION: " . $de->getMessage() . "\n";
+        exit(1);
     }
-    $pdo->query("DELETE FROM order_items WHERE order_id = " . (int)$order["id"]);
-    $pdo->query("DELETE FROM orders WHERE id = " . (int)$order["id"]);
-} catch (\Throwable $e) {
-    echo "ERROR: " . $e->getMessage() . "\n";
 }
-' | grep -q "TAMPER_DEFENSE_OK" && pass "Client-submitted delivery fees and mismatched zone IDs are safely overridden by server calculation" || fail "Client tampering defense failed"
+' | grep -q "FORGED_ZONE_REJECTED_OK" && pass "Forged client zone ID that mismatches submitted county/area is strictly rejected by OrderService" || fail "Forged zone ID was not rejected"
+
+# 6b. Client-submitted delivery_fee=0 and total=1 are overridden by server calculation
+SHOPWISE_CONFIG=testing php -r '
+require "app/bootstrap.php";
+use App\Services\OrderService;
+
+$pdo = App\Database\Database::getInstance();
+$cartService = new App\Services\CartService();
+$v = $pdo->query("SELECT id FROM product_variants WHERE is_active=1 AND stock_qty > 0 LIMIT 1")->fetchColumn();
+$cartService->addItem((int)$v, 1);
+$cartData = $cartService->getCartDetails();
+
+$choices = [
+    "delivery_method" => "delivery",
+    "recipient_name"  => "Tamper Tester",
+    "phone"           => "0712345678",
+    "county"          => "Other Major Towns",
+    "area"            => "Mombasa",
+    "street_details"  => "Moi Avenue, Mombasa",
+    "zone_id"         => 7, // Authoritative Mombasa zone
+    "delivery_fee"    => 0.0, // Attacker attempts free delivery!
+    "total"           => 1.0, // Attacker attempts KES 1 total!
+];
+
+$token = "fee_override_" . bin2hex(random_bytes(8));
+$order = OrderService::createFromCart($cartData, $choices, 1, $token, "127.0.0.1");
+$pdo->query("DELETE FROM order_items WHERE order_id = " . (int)$order["id"]);
+$pdo->query("DELETE FROM orders WHERE id = " . (int)$order["id"]);
+
+if ((float)$order["delivery_fee"] === 600.0 && (float)$order["total"] > 600.0) {
+    echo "FEE_OVERRIDE_OK\n";
+} else {
+    echo "FEE_OVERRIDE_FAILED: fee=" . $order["delivery_fee"] . " total=" . $order["total"] . "\n";
+    exit(1);
+}
+' | grep -q "FEE_OVERRIDE_OK" && pass "Client-submitted delivery fee of zero and manipulated total are recalculated and overridden server-side" || fail "Client price override was not overridden"
+
+# 6c. Supported county with unsupported area is strictly rejected
+SHOPWISE_CONFIG=testing php -r '
+require "app/bootstrap.php";
+use App\Services\DeliveryService;
+
+try {
+    DeliveryService::resolveAuthoritativeZone("Nairobi", "NonExistentRemoteEstate99");
+    echo "FAILED_TO_REJECT\n";
+    exit(1);
+} catch (\DomainException $de) {
+    if (str_contains($de->getMessage(), "Delivery is unavailable for")) {
+        echo "UNSUPPORTED_AREA_REJECTED_OK\n";
+    } else {
+        echo "WRONG_MSG: " . $de->getMessage() . "\n";
+        exit(1);
+    }
+}
+' | grep -q "UNSUPPORTED_AREA_REJECTED_OK" && pass "Supported county with unsupported area is rejected with clear error message" || fail "Unsupported area in valid county was not rejected"
+
+# 6d. Ambiguous delivery location matching multiple distinct active zones is rejected
+run_sql "INSERT INTO delivery_zones (county, area, fee, est_days_min, est_days_max, is_active, created_at)
+         VALUES ('Nairobi', 'Ambiguous Test Square', 250.00, 1, 2, 1, NOW()),
+                ('Nairobi', 'Ambiguous Test Square Extension', 350.00, 1, 2, 1, NOW());"
+AMBIG_IDS=$(run_sql "SELECT id FROM delivery_zones WHERE area LIKE 'Ambiguous Test Square%';")
+
+SHOPWISE_CONFIG=testing php -r '
+require "app/bootstrap.php";
+use App\Services\DeliveryService;
+
+try {
+    DeliveryService::resolveAuthoritativeZone("Nairobi", "Ambiguous Test Square");
+    echo "AMBIGUOUS_ACCEPTED_ERROR\n";
+    exit(1);
+} catch (\DomainException $de) {
+    if (str_contains($de->getMessage(), "ambiguous") || str_contains($de->getMessage(), "multiple configured delivery zones")) {
+        echo "AMBIGUOUS_REJECTED_OK\n";
+    } else {
+        echo "UNEXPECTED_MSG: " . $de->getMessage() . "\n";
+        exit(1);
+    }
+}
+' | grep -q "AMBIGUOUS_REJECTED_OK" && pass "Ambiguous delivery location matching multiple distinct active zones is rejected" || fail "Ambiguous location was not rejected"
+
+for aid in $AMBIG_IDS; do
+    run_sql "DELETE FROM delivery_zones WHERE id = $aid;"
+done
 
 # ------------------------------------------------------------------------------
 # TEST GROUP 7: Historical Order Delivery Charge Stability

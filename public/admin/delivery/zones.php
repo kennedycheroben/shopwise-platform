@@ -277,7 +277,7 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
                                                 </button>
                                             </li>
                                             <li>
-                                                <form method="POST" action="<?= e(url('admin/delivery/zones.php')) ?>" onsubmit="return confirm('Change status for <?= e($z['area']) ?>?');">
+                                                <form method="POST" action="<?= e(url('admin/delivery/zones.php')) ?>" onsubmit="return confirm('Change status for ' + <?= json_encode((string)$z['area'], JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?> + '?');">
                                                     <?= csrf_field() ?>
                                                     <input type="hidden" name="action" value="toggle">
                                                     <input type="hidden" name="id" value="<?= e($z['id']) ?>">
@@ -297,7 +297,7 @@ require dirname(__DIR__, 3) . '/app/views/admin/layout.php';
                                                         <i class="bi bi-trash me-2"></i> Delete (In Use)
                                                     </button>
                                                 <?php else: ?>
-                                                    <form method="POST" action="<?= e(url('admin/delivery/zones.php')) ?>" onsubmit="return confirm('Permanently delete <?= e($z['county']) ?> - <?= e($z['area']) ?>?');">
+                                                    <form method="POST" action="<?= e(url('admin/delivery/zones.php')) ?>" onsubmit="return confirm('Permanently delete ' + <?= json_encode((string)($z['county'] . ' - ' . $z['area']), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?> + '?');">
                                                         <?= csrf_field() ?>
                                                         <input type="hidden" name="action" value="delete">
                                                         <input type="hidden" name="id" value="<?= e($z['id']) ?>">

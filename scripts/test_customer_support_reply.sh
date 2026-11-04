@@ -174,6 +174,70 @@ fi
 
 run_sql "DELETE FROM contact_messages WHERE id = $FAIL_MSG_ID;"
 
+# 4b. Mid-Transaction Failure Injection Test
+INJECT_MSG_ID=$(run_sql "INSERT INTO contact_messages (name, email, subject, message, status, created_at)
+                        VALUES ('Charlie Omondi', 'charlie.rollback@example.com', 'Order Inquiry', 'Where is my order #1234?', 'new', NOW());
+                        SELECT LAST_INSERT_ID();")
+
+INJECTION_TEST_OUTPUT=$(SHOPWISE_CONFIG=testing php -r '
+require "app/bootstrap.php";
+use App\Services\ContactMessageService;
+
+$msgId = (int)$argv[1];
+
+// Inject an unexpected runtime failure inside the active transaction
+ContactMessageService::$testFailureHook = function($pdo, $id) {
+    throw new \RuntimeException("SIMULATED_DB_DISCONNECT_OR_QUEUE_CRASH");
+};
+
+try {
+    ContactMessageService::reply($msgId, "Your order is in transit.", 1, "127.0.0.1");
+    echo "UNEXPECTED_TRANSACTION_SUCCESS";
+} catch (\RuntimeException $re) {
+    if (str_contains($re->getMessage(), "SIMULATED_DB_DISCONNECT_OR_QUEUE_CRASH")) {
+        echo "INJECTION_CAUGHT_OK";
+    } else {
+        echo "UNEXPECTED_EXCEPTION: " . $re->getMessage();
+    }
+} catch (\Throwable $t) {
+    echo "WRONG_THROWABLE: " . $t->getMessage();
+} finally {
+    ContactMessageService::$testFailureHook = null;
+}
+' "$INJECT_MSG_ID")
+
+if [ "$INJECTION_TEST_OUTPUT" = "INJECTION_CAUGHT_OK" ]; then
+    pass "Controlled failure-injection inside reply transaction was caught and rethrown"
+else
+    fail "Failure injection did not trigger expected exception: $INJECTION_TEST_OUTPUT"
+fi
+
+# Verify message status rolled back to 'new' (NOT 'replied')
+ROLLBACK_STATUS=$(run_sql "SELECT status FROM contact_messages WHERE id = $INJECT_MSG_ID;")
+if [ "$ROLLBACK_STATUS" = "new" ]; then
+    pass "Contact message status rolled back cleanly to 'new' after failure injection"
+else
+    fail "Contact message status was not rolled back (current: '$ROLLBACK_STATUS')"
+fi
+
+# Verify no orphaned rows in email_queue
+ORPHANED_EMAILS=$(run_sql "SELECT COUNT(*) FROM email_queue WHERE to_email = 'charlie.rollback@example.com';")
+if [ "$ORPHANED_EMAILS" -eq 0 ]; then
+    pass "Zero orphaned rows in email_queue after transaction rollback"
+else
+    fail "Found $ORPHANED_EMAILS orphaned rows in email_queue after transaction failure"
+fi
+
+# Verify no partial audit logs written
+PARTIAL_AUDIT=$(run_sql "SELECT COUNT(*) FROM audit_log WHERE entity_type = 'contact_message' AND entity_id = $INJECT_MSG_ID;")
+if [ "$PARTIAL_AUDIT" -eq 0 ]; then
+    pass "Zero partial audit logs in audit_log after transaction rollback"
+else
+    fail "Found $PARTIAL_AUDIT partial audit log entries after transaction failure"
+fi
+
+run_sql "DELETE FROM contact_messages WHERE id = $INJECT_MSG_ID;"
+
 # ------------------------------------------------------------------------------
 # TEST 5: RBAC Enforcement on messages.manage
 # ------------------------------------------------------------------------------

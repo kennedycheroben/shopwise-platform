@@ -877,28 +877,21 @@ final class OrderService
                     $deliveryFee = (float)$distQuote['fee'];
                     $distanceKm = (float)$distQuote['distance_km'];
                     $deliveryPricingMethod = 'distance';
-                } elseif (!empty($choices['zone_id'])) {
-                    try {
-                        $zoneQuote = DeliveryService::quoteZone((int)$choices['zone_id'], $computedSubtotal);
-                    } catch (\InvalidArgumentException $iae) {
-                        throw new DomainException($iae->getMessage());
-                    }
-                    $deliveryFee = (float)$zoneQuote['fee'];
-                    $deliveryPricingMethod = 'zone';
                 } elseif (!empty($choices['county']) && !empty($choices['area'])) {
-                    $matchedZone = DeliveryService::matchZoneByLocation((string)$choices['county'], (string)$choices['area']);
-                    if (!$matchedZone) {
-                        throw new DomainException("Delivery is not available for '" . $choices['county'] . " - " . $choices['area'] . "'. Please select a supported delivery zone.");
-                    }
-                    try {
-                        $zoneQuote = DeliveryService::quoteZone((int)$matchedZone['id'], $computedSubtotal);
-                    } catch (\InvalidArgumentException $iae) {
-                        throw new DomainException($iae->getMessage());
-                    }
+                    $suppliedZoneId = (!empty($choices['zone_id']) && is_numeric($choices['zone_id'])) ? (int)$choices['zone_id'] : null;
+                    $resolvedZone = DeliveryService::resolveAuthoritativeZone(
+                        (string)$choices['county'],
+                        (string)$choices['area'],
+                        $suppliedZoneId
+                    );
+                    $zoneQuote = DeliveryService::quoteZone((int)$resolvedZone['id'], $computedSubtotal);
                     $deliveryFee = (float)$zoneQuote['fee'];
                     $deliveryPricingMethod = 'zone';
+                    $choices['zone_id'] = (int)$resolvedZone['id'];
+                } elseif (!empty($choices['zone_id'])) {
+                    throw new DomainException("County and delivery area are required for courier delivery.");
                 } else {
-                    throw new DomainException("Please select a valid delivery zone or pinpoint your delivery location.");
+                    throw new DomainException("Please provide a valid delivery location (County and Area) or select Store Pickup.");
                 }
             }
 
