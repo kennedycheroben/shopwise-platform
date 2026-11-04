@@ -1154,7 +1154,7 @@ try {
 
     // 6. Staff actions
     \$stfId = StaffService::create(['first_name' => 'Audit', 'last_name' => 'Staff', 'email' => 'audit_stf_${RAND_ID}@test.local', 'role' => 'staff'], \$actorId, \$ip);
-    StaffService::update(\$stfId, ['first_name' => 'Audit2', 'last_name' => 'Staff2', 'role' => 'staff'], \$actorId, \$ip);
+    StaffService::update(\$stfId, ['first_name' => 'Audit Two', 'last_name' => 'Staff Two', 'role' => 'staff'], \$actorId, \$ip);
     StaffService::toggleStatus(\$stfId, \$actorId, \$ip);
 
     // Check audit log for all 15 actions

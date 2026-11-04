@@ -180,6 +180,7 @@ run_suite "route_guard"      "scripts/test_test_route_guard.php" "php"
 run_suite "browser_marketing" "scripts/test_browser_marketing.sh"
 run_suite "uat_15_steps"     "scripts/uat_15_steps.sh"
 run_suite "stock_parity"     "scripts/check_stock_parity.py" "python3"
+run_suite "guest_cart_checkout" "scripts/test_public_guest_cart_checkout.sh"
 
 echo ""
 
@@ -343,6 +344,14 @@ parse_parity() {
     fi
 }
 
+parse_guest_cart_checkout() {
+    local log="$TMP_OUT_DIR/guest_cart_checkout.log"
+    local clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
+    local passed=$(echo "$clean_text" | grep -oP 'Passed:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local failed=$(echo "$clean_text" | grep -oP 'Failed:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    echo "${passed:-0} ${failed:-0}"
+}
+
 echo -e "${BOLD}${CYAN}==============================================================================${NC}"
 echo -e "${BOLD}${CYAN}                       TEST SUITE EXECUTION SUMMARY                           ${NC}"
 echo -e "${BOLD}${CYAN}==============================================================================${NC}"
@@ -396,6 +405,7 @@ report_row "route_guard"      "test_route_guard"    parse_route_guard
 report_row "browser_marketing" "browser_marketing"   parse_browser_marketing
 report_row "uat_15_steps"     "uat_15_steps.sh"     parse_uat
 report_row "stock_parity"     "check_stock_parity"  parse_parity
+report_row "guest_cart_checkout" "guest_cart_checkout.sh" parse_guest_cart_checkout
 
 echo "---------------------------------+----------+----------+------------+------------"
 printf "%-32s | %-8s | %-8s | %-10s | %b\n" "TOTAL" "$TOTAL_PASSED" "$TOTAL_FAILED" "-" "$([ "$TOTAL_FAILED" -eq 0 ] && [ "$OVERALL_STATUS" -eq 0 ] && echo -e "${GREEN}ALL PASS${NC}" || echo -e "${RED}FAILURES${NC}")"

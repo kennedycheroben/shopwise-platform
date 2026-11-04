@@ -64,12 +64,6 @@ return [
         ],
     ],
 
-    'google_oauth' => [
-        'client_id'     => 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com',
-        'client_secret' => 'YOUR_GOOGLE_CLIENT_SECRET',
-        'redirect_uri'  => 'https://your-domain.co.ke/auth/google/callback.php',
-    ],
-
     'mail' => [
         'driver'       => 'smtp', // 'smtp', 'mail', or 'queue_only'
         'host'         => 'mail.kennedycheroben.co.ke',
@@ -96,7 +90,9 @@ return [
     ],
 
     'google' => [
-        'client_id'     => '', // e.g. 'YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com'
-        'client_secret' => '', // e.g. 'YOUR_GOOGLE_CLIENT_SECRET'
+        'client_id'     => '', // Google OAuth 2.0 Web client ID
+        'client_secret' => '', // Store the secret here only in config.local.php
+        // The callback URI is generated as <base_url>/auth/google/callback.
+        // Register that exact HTTPS URI in Google Cloud Console.
     ],
 ];

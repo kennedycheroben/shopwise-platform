@@ -145,6 +145,15 @@ include __DIR__ . '/partials/flash.php';
                                     <span class="small text-muted">Already have an account? </span>
                                     <a href="<?= e(url('login' . (!empty($returnUrl) ? '?next=' . urlencode($returnUrl) : ''))) ?>" class="small text-primary fw-bold text-decoration-none">Sign in here</a>
                                 </div>
+
+                                <?php if (GoogleAuthService::isConfigured()): ?>
+                                    <div class="col-12 text-center mt-2">
+                                        <div class="p-2 rounded bg-light border text-muted small" style="font-size: 0.8rem;">
+                                            <i class="bi bi-info-circle me-1 text-primary"></i>
+                                            <strong>Notice for Google users:</strong> Google Sign-In is only enabled for existing verified accounts. Please complete registration above; you can link Google after verifying your email.
+                                        </div>
+                                    </div>
+                                <?php endif; ?>
                             </div>
                         </form>
 

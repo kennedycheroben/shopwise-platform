@@ -83,11 +83,13 @@ CHROME_PID=$!
 cleanup() {
     echo "Cleaning up Chrome (PID ${CHROME_PID:-})..."
     if [ -n "${CHROME_PID:-}" ]; then
-        kill "$CHROME_PID" 2>/dev/null || true
+        pkill -P "$CHROME_PID" 2>/dev/null || true
+        kill -9 "$CHROME_PID" 2>/dev/null || true
         wait "$CHROME_PID" 2>/dev/null || true
     fi
-    if [ -n "${CHROME_PROFILE:-}" ]; then
-        rm -rf "$CHROME_PROFILE"
+    if [ -n "${CHROME_PROFILE:-}" ] && [ -d "$CHROME_PROFILE" ]; then
+        sleep 0.3
+        rm -rf "$CHROME_PROFILE" 2>/dev/null || rm -rf "$CHROME_PROFILE" 2>/dev/null || true
     fi
     if [ -n "${ADMIN_UID:-}" ]; then
         run_sql "DELETE FROM user_roles WHERE user_id = $ADMIN_UID; DELETE FROM users WHERE id = $ADMIN_UID;" 2>/dev/null || true

@@ -1181,8 +1181,8 @@ $router->get('/register', function () use ($cartService) {
     $cart = $cartService->getCartDetails();
     $returnUrl = CustomerAuthService::sanitizeReturnUrl($_GET['next'] ?? null);
     $formData = [];
-    $error = null;
-    $success = null;
+    $error = flash_get('error');
+    $success = flash_get('success');
     include dirname(__DIR__) . '/app/views/store/register.php';
 });
 
@@ -1224,7 +1224,7 @@ $router->get('/login', function () use ($cartService) {
     }
     $cart = $cartService->getCartDetails();
     $returnUrl = CustomerAuthService::sanitizeReturnUrl($_GET['next'] ?? null);
-    $error = null;
+    $error = flash_get('error');
     $info = flash_get('info') ?? flash_get('success');
     include dirname(__DIR__) . '/app/views/store/login.php';
 });
