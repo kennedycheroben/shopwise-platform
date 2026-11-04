@@ -44,7 +44,7 @@ include __DIR__ . '/partials/flash.php';
 
                         <?php if (GoogleAuthService::isConfigured()): ?>
                             <div class="social-auth text-center mb-4">
-                                <a href="<?= e(url('auth/google' . (!empty($returnUrl) ? '?next=' . urlencode($returnUrl) : ''))) ?>" class="auth-btn auth-google btn btn-outline-dark w-100 py-2 d-inline-flex align-items-center justify-content-center text-decoration-none">
+                                <a href="<?= e(url('auth/google' . (!empty($returnUrl) ? '?next=' . urlencode($returnUrl) : ''))) ?>" class="auth-btn auth-google btn btn-outline-dark w-100 py-2 d-inline-flex align-items-center justify-content-center text-decoration-none" data-testid="google-auth-button">
                                     <i class="bi bi-google me-2 text-danger"></i>
                                     <span>Continue with Google</span>
                                 </a>
@@ -53,6 +53,8 @@ include __DIR__ . '/partials/flash.php';
                             <div class="divider-line text-center my-3 position-relative">
                                 <span class="bg-white px-3 text-muted small">or continue with email</span>
                             </div>
+                        <?php else: ?>
+                            <!-- Google Sign-In unconfigured: <?= e(GoogleAuthService::getMissingConfigurationReason()) ?> -->
                         <?php endif; ?>
 
                         <?php if (!empty($error)): ?>
@@ -146,20 +148,7 @@ include __DIR__ . '/partials/flash.php';
                                     <a href="<?= e(url('login' . (!empty($returnUrl) ? '?next=' . urlencode($returnUrl) : ''))) ?>" class="small text-primary fw-bold text-decoration-none">Sign in here</a>
                                 </div>
 
-                                <?php if (GoogleAuthService::isConfigured()): ?>
-                                    <div class="col-12 my-3 text-center position-relative">
-                                        <div class="separator text-center position-relative">
-                                            <span class="bg-white px-2 text-muted small">or register with</span>
-                                        </div>
-                                    </div>
 
-                                    <div class="col-12">
-                                        <a href="<?= e(url('auth/google' . (!empty($returnUrl) ? '?next=' . urlencode($returnUrl) : ''))) ?>" class="btn-social w-100 d-flex align-items-center justify-content-center text-decoration-none border rounded py-2 text-dark">
-                                            <i class="bi bi-google me-2 text-danger"></i>
-                                            <span>Continue with Google</span>
-                                        </a>
-                                    </div>
-                                <?php endif; ?>
                             </div>
                         </form>
 

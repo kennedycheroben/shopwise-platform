@@ -123,11 +123,13 @@ include __DIR__ . '/partials/flash.php';
                                                 </div>
 
                                                 <div class="social-buttons">
-                                                    <a href="<?= e(url('auth/google' . (!empty($returnUrl) ? '?next=' . urlencode($returnUrl) : ''))) ?>" class="btn-social w-100 d-flex align-items-center justify-content-center text-decoration-none border rounded py-2 text-dark">
+                                                    <a href="<?= e(url('auth/google' . (!empty($returnUrl) ? '?next=' . urlencode($returnUrl) : ''))) ?>" class="btn-social w-100 d-flex align-items-center justify-content-center text-decoration-none border rounded py-2 text-dark" data-testid="google-auth-button">
                                                         <i class="bi bi-google me-2 text-danger"></i>
                                                         <span>Continue with Google</span>
                                                     </a>
                                                 </div>
+                                            <?php else: ?>
+                                                <!-- Google Sign-In unconfigured: <?= e(GoogleAuthService::getMissingConfigurationReason()) ?> -->
                                             <?php endif; ?>
                                         </form>
                                     </div><!-- End Login Form -->

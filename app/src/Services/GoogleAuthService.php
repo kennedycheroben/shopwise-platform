@@ -27,14 +27,40 @@ final class GoogleAuthService
         return !empty(self::getClientId()) && !empty(self::getClientSecret());
     }
 
+    /**
+     * Return explanatory diagnostic string when Google OAuth is not configured.
+     * Never exposes secrets.
+     */
+    public static function getMissingConfigurationReason(): ?string
+    {
+        $hasId = !empty(self::getClientId());
+        $hasSecret = !empty(self::getClientSecret());
+        if ($hasId && $hasSecret) {
+            return null;
+        }
+        if (!$hasId && !$hasSecret) {
+            return 'Google OAuth Client ID and Client Secret are not configured in settings, environment variables, or config files.';
+        }
+        if (!$hasId) {
+            return 'Google OAuth Client ID is not configured (missing google_client_id setting, GOOGLE_CLIENT_ID environment variable, or config[google][client_id]).';
+        }
+        return 'Google OAuth Client Secret is not configured (missing google_client_secret setting, GOOGLE_CLIENT_SECRET environment variable, or config[google][client_secret]).';
+    }
+
     public static function getClientId(): string
     {
         $id = setting('google_client_id');
         if (!empty($id)) {
             return (string)$id;
         }
+
+        $envId = getenv('GOOGLE_CLIENT_ID') ?: ($_ENV['GOOGLE_CLIENT_ID'] ?? ($_SERVER['GOOGLE_CLIENT_ID'] ?? null));
+        if (!empty($envId)) {
+            return (string)$envId;
+        }
+
         $config = require dirname(__DIR__, 2) . '/config/config.php';
-        return (string)($config['google']['client_id'] ?? '');
+        return (string)($config['google']['client_id'] ?? ($config['google_oauth']['client_id'] ?? ''));
     }
 
     public static function getClientSecret(): string
@@ -43,8 +69,14 @@ final class GoogleAuthService
         if (!empty($secret)) {
             return (string)$secret;
         }
+
+        $envSecret = getenv('GOOGLE_CLIENT_SECRET') ?: ($_ENV['GOOGLE_CLIENT_SECRET'] ?? ($_SERVER['GOOGLE_CLIENT_SECRET'] ?? null));
+        if (!empty($envSecret)) {
+            return (string)$envSecret;
+        }
+
         $config = require dirname(__DIR__, 2) . '/config/config.php';
-        return (string)($config['google']['client_secret'] ?? '');
+        return (string)($config['google']['client_secret'] ?? ($config['google_oauth']['client_secret'] ?? ''));
     }
 
     public static function getRedirectUri(): string

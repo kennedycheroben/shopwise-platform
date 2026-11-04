@@ -269,17 +269,17 @@ GUEST_TOKEN=$(echo "$CART_JSON" | grep -o '"guest_token":"[^"]*"' | cut -d'"' -f
 info "3. CHECKOUT AUTHENTICATION REQUIREMENT & ORDER GATE"
 
 # 3.1 Guest visiting /checkout sees sign-in gate
-CHECKOUT_BODY=$(curl -s -b "shopwise_cart=$GUEST_TOKEN" "$BASE_URL/checkout")
-if echo "$CHECKOUT_BODY" | grep -qi "Sign in to check out"; then
+curl -s -b "shopwise_cart=$GUEST_TOKEN" "$BASE_URL/checkout" > "$BODY_FILE"
+if grep -qi "Sign in to check out" "$BODY_FILE"; then
     pass "Unauthenticated visitor visiting /checkout is shown the sign-in/register gate"
-elif echo "$CHECKOUT_BODY" | grep -qi "login?next="; then
+elif grep -qi "login?next=" "$BODY_FILE"; then
     pass "Unauthenticated visitor visiting /checkout is prompted with login?next="
 else
     fail "Unauthenticated visitor not prompted with authentication on /checkout"
 fi
 
 # 3.2 Intended destination preserved in redirect / next URL
-if echo "$CHECKOUT_BODY" | grep -qi "next=%2Fcheckout" || echo "$CHECKOUT_BODY" | grep -qi "next=/checkout"; then
+if grep -qi "next=%2Fcheckout" "$BODY_FILE" || grep -qi "next=/checkout" "$BODY_FILE"; then
     pass "Checkout destination preserved in next parameter (next=/checkout)"
 else
     fail "Checkout destination was not preserved in authentication links"
@@ -431,6 +431,56 @@ assert_m_true "guest_cart_purged" "Guest cart record purged after merging to pre
 # 5. GOOGLE SIGN-IN & REGISTRATION POLICY
 # ------------------------------------------------------------------------------
 info "5. GOOGLE SIGN-IN & REGISTRATION POLICY (Direct Registration, Linking & Restrictions)"
+
+# 5.1 Continue with Google button rendering on Login and Register pages (Configured state)
+curl -s "$BASE_URL/login" > "$BODY_FILE"
+if grep -qi "Continue with Google" "$BODY_FILE" && grep -qi "auth/google" "$BODY_FILE"; then
+    pass "Login page renders 'Continue with Google' button when OAuth is configured"
+else
+    fail "Login page does not render 'Continue with Google' button when OAuth is configured"
+fi
+
+if grep -qi "Google Sign-In is available for existing verified ShopWise accounts" "$BODY_FILE"; then
+    fail "Login page still contains outdated 'existing accounts only' message"
+else
+    pass "Login page does not contain outdated 'existing accounts only' message"
+fi
+
+curl -s "$BASE_URL/register" > "$BODY_FILE"
+if grep -qi "Continue with Google" "$BODY_FILE" && grep -qi "auth/google" "$BODY_FILE"; then
+    pass "Register page renders 'Continue with Google' button when OAuth is configured"
+else
+    fail "Register page does not render 'Continue with Google' button when OAuth is configured"
+fi
+
+if grep -qi "Google Sign-In is only enabled for existing verified accounts" "$BODY_FILE"; then
+    fail "Register page still contains outdated 'existing accounts only' message"
+else
+    pass "Register page does not contain outdated 'existing accounts only' message"
+fi
+
+# 5.2 Clicking 'Continue with Google' starts OAuth authorization flow
+AUTH_RESP=$(curl -s -i "$BASE_URL/auth/google?next=%2Fcheckout")
+AUTH_STATUS=$(echo "$AUTH_RESP" | head -n1 | cut -d' ' -f2)
+AUTH_LOC=$(echo "$AUTH_RESP" | grep -i "^Location:" | tr -d '\r' | cut -d' ' -f2 || true)
+if [ "$AUTH_STATUS" -eq 302 ] && [[ "$AUTH_LOC" =~ accounts\.google\.com ]] && [[ "$AUTH_LOC" =~ response_type=code ]] && [[ "$AUTH_LOC" =~ code_challenge= ]]; then
+    pass "Clicking 'Continue with Google' starts OAuth authorization flow with PKCE and state"
+else
+    fail "Clicking 'Continue with Google' failed to start OAuth flow (Status: $AUTH_STATUS, Loc: $AUTH_LOC)"
+fi
+
+# 5.3 Missing configuration diagnostic explanation when OAuth credentials are absent
+CONFIG_DIAG=$(SHOPWISE_CONFIG="" "$PHP_CMD" -r '
+require "app/bootstrap.php";
+use App\Services\GoogleAuthService;
+$hasDiag = !GoogleAuthService::isConfigured() && !empty(GoogleAuthService::getMissingConfigurationReason());
+echo $hasDiag ? "yes" : "no";
+')
+if [ "$CONFIG_DIAG" = "yes" ]; then
+    pass "GoogleAuthService explains missing configuration when credentials are not configured"
+else
+    fail "GoogleAuthService did not explain missing configuration"
+fi
 
 GOOGLE_RUNNER=$(cat <<'EOF'
 require 'app/bootstrap.php';
@@ -683,6 +733,10 @@ $_SESSION[GoogleAuthService::STATE_SESSION_KEY] = $session7;
 [$ok7, $msg7] = GoogleAuthService::handleCallback(['state' => $session7['state'], 'code' => 'mock-code'], $ip);
 $res['unverified_email_claim_rejected'] = (!$ok7);
 
+// Configuration state diagnostics
+$res['configured_in_testing'] = GoogleAuthService::isConfigured();
+$res['missing_reason_null_when_configured'] = (GoogleAuthService::getMissingConfigurationReason() === null);
+
 // Cleanup
 GoogleAuthService::resetHttpClient();
 $res['new_cust_id'] = $newCustId;
@@ -707,6 +761,8 @@ assert_g_true() {
     fi
 }
 
+assert_g_true "configured_in_testing" "GoogleAuthService::isConfigured() evaluates true in test environment"
+assert_g_true "missing_reason_null_when_configured" "getMissingConfigurationReason() returns null when credentials exist"
 assert_g_true "new_customer_registered" "New visitor clicking Continue with Google is automatically registered"
 assert_g_true "new_customer_row_created" "Customer row successfully created in database"
 assert_g_true "new_customer_role_is_customer" "New Google customer is assigned strictly 'customer' role"
