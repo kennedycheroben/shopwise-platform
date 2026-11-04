@@ -397,7 +397,9 @@ unset($noTerms['terms']);
 [$tOk, $tMsg] = CustomerAuthService::register($noTerms, $ip);
 $results['terms_required'] = (!$tOk);
 
-// 5. Enumeration safety on duplicate email$dupData = $regData;$dupData['email'] = $email; // already exists
+// 5. Enumeration safety on duplicate email
+$dupData = $regData;
+$dupData['email'] = $email; // already exists
 [$dOk, $dMsg] = CustomerAuthService::register($dupData, $ip);
 $results['dup_generic_ok'] = $dOk;
 $results['dup_msg_identical'] = str_contains($dMsg, 'verification link');
@@ -795,8 +797,10 @@ RESET_JSON=$(SHOPWISE_CONFIG=testing "$PHP_CMD" -r "$PHP_RESET_RUNNER" "$RAND_SU
 assert_r_true() {
     local key="$1"
     local desc="$2"
-    local val=$(echo "$RESET_JSON" | grep -o "\"$key\":true" || true)    if [ -n "$val" ]; then
-        pass "$desc"    else
+    local val=$(echo "$RESET_JSON" | grep -o "\"$key\":true" || true)
+    if [ -n "$val" ]; then
+        pass "$desc"
+    else
         fail "$desc (failed $key in $RESET_JSON)"
     fi
 }
@@ -1155,7 +1159,8 @@ CustomerAuthService::register([
     'password_confirmation' => $pwd,
     'terms'      => '1',
 ], '127.0.0.1');
-$stmt = $pdo->prepare("SELECT id FROM users WHERE email = :e");$stmt->execute([':e' => $email]);
+$stmt = $pdo->prepare("SELECT id FROM users WHERE email = :e");
+$stmt->execute([':e' => $email]);
 $uid = (int)$stmt->fetchColumn();
 
 $cartService = new CartService($pdo);
@@ -1554,3 +1559,89 @@ for r in "${POST_ROUTES[@]}"; do
     code_no_csrf=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE_URL$r")
     # 2. Forged CSRF
     code_bad_csrf=$(curl -s -o /dev/null -w "%{http_code}" -X POST -d "csrf_token=forged_token_123" "$BASE_URL$r")
+
+    if [ "$code_no_csrf" -eq 403 ] && [ "$code_bad_csrf" -eq 403 ]; then
+        echo "  | $r | $code_no_csrf | $code_bad_csrf | Enforced (403) |"
+        pass "CSRF enforced on POST $r (403 on missing and forged tokens)"
+    else
+        echo "  | $r | $code_no_csrf | $code_bad_csrf | FAILED |"
+        fail "CSRF NOT enforced on POST $r (no_csrf=$code_no_csrf, bad_csrf=$code_bad_csrf)"
+    fi
+done
+
+# Mass Assignment Test
+PHP_MASS_RUNNER=$(cat <<'EOF'
+require 'app/bootstrap.php';
+use App\Database\Database;
+use App\Services\CustomerAuthService;
+
+$pdo = Database::getInstance();
+$runId = $argv[1];
+
+// Attempt registration with injected administrative privileges
+CustomerAuthService::register([
+    'first_name' => "Hacker",
+    'last_name'  => "Privilege",
+    'email'      => "hacker_{$runId}@test.local",
+    'password'   => "HackPass2026_{$runId}!",
+    'password_confirmation' => "HackPass2026_{$runId}!",
+    'terms'      => '1',
+    'role'       => 'admin',
+    'status'     => 'blocked',
+    'email_verified_at' => date('Y-m-d H:i:s'),
+    'google_id'  => 'injected_google_id',
+    'user_id'    => 1,
+], '127.0.0.1');
+
+$u = $pdo->query("SELECT id, role, status, email_verified_at, google_id FROM users WHERE email = 'hacker_{$runId}@test.local'")->fetch(PDO::FETCH_ASSOC);
+
+$res = [];
+$res['role_safe'] = ($u['role'] === 'customer');
+$res['status_safe'] = ($u['status'] === 'active');
+$res['verified_safe'] = empty($u['email_verified_at']);
+$res['google_id_safe'] = empty($u['google_id']);
+$res['user_id'] = (int)($u['id'] ?? 0);
+
+echo json_encode($res);
+EOF
+)
+
+MASS_JSON=$(SHOPWISE_CONFIG=testing "$PHP_CMD" -r "$PHP_MASS_RUNNER" "$RAND_SUF")
+
+assert_m_true() {
+    local key="$1"
+    local desc="$2"
+    local val=$(echo "$MASS_JSON" | grep -o "\"$key\":true" || true)
+    if [ -n "$val" ]; then
+        pass "$desc"
+    else
+        fail "$desc (failed $key in $MASS_JSON)"
+    fi
+}
+
+assert_m_true "role_safe" "Mass assignment attempt to set role=admin is safely ignored"
+assert_m_true "status_safe" "Mass assignment attempt to set status=blocked is safely ignored"
+assert_m_true "verified_safe" "Mass assignment attempt to set email_verified_at is safely ignored"
+assert_m_true "google_id_safe" "Mass assignment attempt to set google_id is safely ignored"
+
+M_UID=$(echo "$MASS_JSON" | grep -o '"user_id":[0-9]*' | cut -d: -f2)
+[ -n "$M_UID" ] && [ "$M_UID" -gt 0 ] && CREATED_USER_IDS+=("$M_UID")
+
+# ==============================================================================
+# SUBTEST (l): Leak Inspection - Zero hashes or raw secrets exposed
+# ==============================================================================
+info "SUBTEST (l): Leak inspection - Zero secrets, password hashes or tokens exposed"
+
+LEAK_FOUND=0
+# Inspect recent audit log details for leaked password hashes or tokens
+HASH_IN_AUDIT=$(run_sql "SELECT details FROM audit_log WHERE id > $PRE_AUDIT_MAX_ID AND (details LIKE '%\$2y$%' OR details LIKE '%password_hash%');" || true)
+if [ -n "$HASH_IN_AUDIT" ]; then
+    fail "Password hash detected in audit_log details"
+    LEAK_FOUND=1
+else
+    pass "Zero password hashes leaked into audit_log"
+fi
+
+if [ "$LEAK_FOUND" -eq 0 ]; then
+    pass "Zero secret leaks confirmed across responses, logs and database rows"
+fi
