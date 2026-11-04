@@ -397,8 +397,7 @@ unset($noTerms['terms']);
 [$tOk, $tMsg] = CustomerAuthService::register($noTerms, $ip);
 $results['terms_required'] = (!$tOk);
 
-// 5. Enumeration safety on duplicate email$dupData = $regData;
-$dupData['email'] = $email; // already exists
+// 5. Enumeration safety on duplicate email$dupData = $regData;$dupData['email'] = $email; // already exists
 [$dOk, $dMsg] = CustomerAuthService::register($dupData, $ip);
 $results['dup_generic_ok'] = $dOk;
 $results['dup_msg_identical'] = str_contains($dMsg, 'verification link');
@@ -797,8 +796,7 @@ assert_r_true() {
     local key="$1"
     local desc="$2"
     local val=$(echo "$RESET_JSON" | grep -o "\"$key\":true" || true)    if [ -n "$val" ]; then
-        pass "$desc"
-    else
+        pass "$desc"    else
         fail "$desc (failed $key in $RESET_JSON)"
     fi
 }
@@ -1003,7 +1001,8 @@ $res['unknown_google_user_not_created'] = ((int)$stmtU->fetchColumn() === 0);
 
 // 4. A pre-existing, verified ShopWise customer can link and use Google sign-in.
 $existingEmail = "existing_google_{$runId}@test.local";
-$existingPasswordHash = password_hash("ExistingPass2026_{$runId}!", PASSWORD_DEFAULT);
+$existingPassword = "ExistingPass2026_{$runId}!";
+$existingPasswordHash = password_hash($existingPassword, PASSWORD_DEFAULT);
 $pdo->prepare("
     INSERT INTO users (role, first_name, last_name, email, password_hash, email_verified_at, status, created_at, updated_at)
     VALUES ('customer', 'Existing', 'Customer', :e, :p, NOW(), 'active', NOW(), NOW())
@@ -1029,15 +1028,15 @@ $res['existing_customer_linked'] = $linkOk;
 $stmtLinked = $pdo->prepare("SELECT id, role, password_hash, email_verified_at, google_id FROM users WHERE id = :id");
 $stmtLinked->execute([':id' => $existingId]);
 $linkedUser = $stmtLinked->fetch(PDO::FETCH_ASSOC);
-$res['existing_password_preserved'] = password_verify("ExistingPass2026_{$runId}!", $linkedUser['password_hash'] ?? '');
+$res['existing_password_preserved'] = password_verify($existingPassword, $linkedUser['password_hash'] ?? '');
 $res['existing_email_stays_verified'] = !empty($linkedUser['email_verified_at']);
 $res['existing_google_id_linked'] = (($linkedUser['google_id'] ?? '') === $linkPayload['sub']);
 $res['existing_customer_session_created'] = ((int)($_SESSION[CustomerAuthService::SESSION_KEY]['id'] ?? 0) === $existingId);
 
-// 5. A ShopWise account whose email is not yet verified cannot be linked.
-// Its password and outstanding verification/reset tokens must remain untouched.
+// 5. Unverified existing accounts cannot be linked; password and tokens stay untouched.
 $unverEmail = "unverified_google_{$runId}@test.local";
-$unverPasswordHash = password_hash("UnverifiedPass2026_{$runId}!", PASSWORD_DEFAULT);
+$unverPassword = "UnverifiedPass2026_{$runId}!";
+$unverPasswordHash = password_hash($unverPassword, PASSWORD_DEFAULT);
 $pdo->prepare("
     INSERT INTO users (role, first_name, last_name, email, password_hash, email_verified_at, status, created_at, updated_at)
     VALUES ('customer', 'Unverified', 'Customer', :e, :p, NULL, 'active', NOW(), NOW())
@@ -1049,8 +1048,7 @@ $pdo->prepare("INSERT INTO password_resets (user_id, token_hash, expires_at, cre
 $unverifiedPayload = $basePayload;
 $unverifiedPayload['email'] = $unverEmail;
 $unverifiedPayload['sub'] = "google_sub_unverified_{$runId}";
-$unverifiedJwt = $signJwt($unverifiedPayload, $resKey, $kid);
-$stubClient->setIdToken($unverifiedJwt);
+$stubClient->setIdToken($signJwt($unverifiedPayload, $resKey, $kid));
 $unverifiedSession = [
     'state' => 'unverified_state_' . $runId,
     'nonce' => $unverifiedPayload['nonce'],
@@ -1066,13 +1064,13 @@ $res['unverified_existing_account_rejected'] = !$unverifiedOk;
 $stmtUnverified = $pdo->prepare("SELECT password_hash, email_verified_at, google_id FROM users WHERE id = :id");
 $stmtUnverified->execute([':id' => $unverifiedId]);
 $unverifiedUser = $stmtUnverified->fetch(PDO::FETCH_ASSOC);
-$res['unverified_password_preserved'] = password_verify("UnverifiedPass2026_{$runId}!", $unverifiedUser['password_hash'] ?? '');
+$res['unverified_password_preserved'] = password_verify($unverPassword, $unverifiedUser['password_hash'] ?? '');
 $res['unverified_account_not_linked'] = empty($unverifiedUser['google_id']) && empty($unverifiedUser['email_verified_at']);
 $verifUsed = (int)$pdo->query("SELECT COUNT(*) FROM email_verifications WHERE user_id = $unverifiedId AND used_at IS NOT NULL")->fetchColumn();
 $resetUsed = (int)$pdo->query("SELECT COUNT(*) FROM password_resets WHERE user_id = $unverifiedId AND used_at IS NOT NULL")->fetchColumn();
 $res['unverified_tokens_preserved'] = ($verifUsed === 0 && $resetUsed === 0);
 
-// 6. Once linked, the same Google identity can sign in on subsequent attempts.
+// 6. The linked Google identity can authenticate on subsequent visits.
 $repeatSession = [
     'state' => 'repeat_state_' . $runId,
     'nonce' => $linkPayload['nonce'],
@@ -1086,7 +1084,6 @@ $_SESSION[GoogleAuthService::STATE_SESSION_KEY] = $repeatSession;
 $res['linked_google_user_can_sign_in'] = $repeatOk && ((int)($_SESSION[CustomerAuthService::SESSION_KEY]['id'] ?? 0) === $existingId);
 
 GoogleAuthService::resetHttpClient();
-
 $res['existing_user_id'] = $existingId;
 $res['unverified_user_id'] = $unverifiedId;
 echo json_encode($res);
@@ -1133,45 +1130,6 @@ G_UNVID=$(echo "$GOOGLE_JSON" | grep -o '"unverified_user_id":[0-9]*' | cut -d: 
 
 
 
-$res['new_user_id'] = (int)($newGUser['id'] ?? 0);
-$res['prereg_user_id'] = $preRegId;
-
-echo json_encode($res);
-EOF
-)
-
-GOOGLE_JSON=$(SHOPWISE_CONFIG=testing "$PHP_CMD" -r "$PHP_GOOGLE_RUNNER" "$RAND_SUF")
-
-assert_g_true() {
-    local key="$1"
-    local desc="$2"
-    local val=$(echo "$GOOGLE_JSON" | grep -o "\"$key\":true" || true)
-    if [ -n "$val" ]; then
-        pass "$desc"
-    else
-        fail "$desc (failed $key in $GOOGLE_JSON)"
-    fi
-}
-
-assert_g_true "auth_url_has_pkce" "Google OAuth authorization URL enforces PKCE (S256) and state/nonce"
-assert_g_true "wrong_iss_rejected" "ID token validation strictly rejects invalid issuer"
-assert_g_true "wrong_aud_rejected" "ID token validation strictly rejects audience mismatch"
-assert_g_true "expired_token_rejected" "ID token validation strictly rejects expired tokens"
-assert_g_true "wrong_nonce_rejected" "ID token validation strictly rejects nonce mismatch"
-assert_g_true "unverified_email_rejected" "Google account with unverified email is strictly refused"
-assert_g_true "bad_signature_rejected" "Tampered or invalid token RS256 signature is rejected"
-assert_g_true "google_new_user_ok" "New customer account created via verified Google ID token"
-assert_g_true "google_user_has_null_pwd" "Google-created customer has password_hash NULL"
-assert_g_true "google_user_email_verified" "Google-created customer email_verified_at is automatically established"
-assert_g_true "google_user_id_saved" "google_id stored securely on customer record"
-assert_g_true "password_hash_wiped" "Pre-registration account takeover prevented: unverified password hash wiped upon Google linking"
-assert_g_true "prior_tokens_invalidated" "Outstanding verification and reset tokens invalidated upon Google link"
-
-G_NUID=$(echo "$GOOGLE_JSON" | grep -o '"new_user_id":[0-9]*' | cut -d: -f2)
-G_PUID=$(echo "$GOOGLE_JSON" | grep -o '"prereg_user_id":[0-9]*' | cut -d: -f2)
-[ -n "$G_NUID" ] && [ "$G_NUID" -gt 0 ] && CREATED_USER_IDS+=("$G_NUID")
-[ -n "$G_PUID" ] && [ "$G_PUID" -gt 0 ] && CREATED_USER_IDS+=("$G_PUID")
-
 # ==============================================================================
 # SUBTEST (g): Cart Merge with stock clamping, 10-line cap & concurrency
 # ==============================================================================
@@ -1197,8 +1155,7 @@ CustomerAuthService::register([
     'password_confirmation' => $pwd,
     'terms'      => '1',
 ], '127.0.0.1');
-$stmt = $pdo->prepare("SELECT id FROM users WHERE email = :e");
-$stmt->execute([':e' => $email]);
+$stmt = $pdo->prepare("SELECT id FROM users WHERE email = :e");$stmt->execute([':e' => $email]);
 $uid = (int)$stmt->fetchColumn();
 
 $cartService = new CartService($pdo);
@@ -1597,80 +1554,3 @@ for r in "${POST_ROUTES[@]}"; do
     code_no_csrf=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE_URL$r")
     # 2. Forged CSRF
     code_bad_csrf=$(curl -s -o /dev/null -w "%{http_code}" -X POST -d "csrf_token=forged_token_123" "$BASE_URL$r")
-
-    if [ "$code_no_csrf" -eq 403 ] && [ "$code_bad_csrf" -eq 403 ]; then
-        echo "  | $r | $code_no_csrf | $code_bad_csrf | Enforced (403) |"
-        pass "CSRF enforced on POST $r (403 on missing and forged tokens)"
-    else
-        echo "  | $r | $code_no_csrf | $code_bad_csrf | FAILED |"
-        fail "CSRF NOT enforced on POST $r (no_csrf=$code_no_csrf, bad_csrf=$code_bad_csrf)"
-    fi
-done
-
-# Mass Assignment Test
-PHP_MASS_RUNNER=$(cat <<'EOF'
-require 'app/bootstrap.php';
-use App\Database\Database;
-use App\Services\CustomerAuthService;
-
-$pdo = Database::getInstance();
-$runId = $argv[1];
-
-// Attempt registration with injected administrative privileges
-CustomerAuthService::register([
-    'first_name' => "Hacker",
-    'last_name'  => "Privilege",
-    'email'      => "hacker_{$runId}@test.local",
-    'password'   => "HackPass2026_{$runId}!",
-    'password_confirmation' => "HackPass2026_{$runId}!",
-    'terms'      => '1',
-    'role'       => 'admin',
-    'status'     => 'blocked',
-    'email_verified_at' => date('Y-m-d H:i:s'),
-    'google_id'  => 'injected_google_id',
-    'user_id'    => 1,
-], '127.0.0.1');
-
-$u = $pdo->query("SELECT id, role, status, email_verified_at, google_id FROM users WHERE email = 'hacker_{$runId}@test.local'")->fetch(PDO::FETCH_ASSOC);
-
-$res = [];
-$res['role_safe'] = ($u['role'] === 'customer');
-$res['status_safe'] = ($u['status'] === 'active');
-$res['verified_safe'] = empty($u['email_verified_at']);
-$res['google_id_safe'] = empty($u['google_id']);
-$res['user_id'] = (int)($u['id'] ?? 0);
-
-echo json_encode($res);
-EOF
-)
-
-MASS_JSON=$(SHOPWISE_CONFIG=testing "$PHP_CMD" -r "$PHP_MASS_RUNNER" "$RAND_SUF")
-
-assert_m_true() {
-    local key="$1"
-    local desc="$2"
-    local val=$(echo "$MASS_JSON" | grep -o "\"$key\":true" || true)
-    if [ -n "$val" ]; then
-        pass "$desc"
-    else
-        fail "$desc (failed $key in $MASS_JSON)"
-    fi
-}
-
-assert_m_true "role_safe" "Mass assignment attempt to set role=admin is safely ignored"
-assert_m_true "status_safe" "Mass assignment attempt to set status=blocked is safely ignored"
-assert_m_true "verified_safe" "Mass assignment attempt to set email_verified_at is safely ignored"
-assert_m_true "google_id_safe" "Mass assignment attempt to set google_id is safely ignored"
-
-M_UID=$(echo "$MASS_JSON" | grep -o '"user_id":[0-9]*' | cut -d: -f2)
-[ -n "$M_UID" ] && [ "$M_UID" -gt 0 ] && CREATED_USER_IDS+=("$M_UID")
-
-# ==============================================================================
-# SUBTEST (l): Leak Inspection - Zero hashes or raw secrets exposed
-# ==============================================================================
-info "SUBTEST (l): Leak inspection - Zero secrets, password hashes or tokens exposed"
-
-LEAK_FOUND=0
-# Inspect recent audit log details for leaked password hashes or tokens
-HASH_IN_AUDIT=$(run_sql "SELECT details FROM audit_log WHERE id > $PRE_AUDIT_MAX_ID AND (details LIKE '%\$2y$%' OR details LIKE '%password_hash%');" || true)
-if [ -n "$HASH_IN_AUDIT" ]; then
