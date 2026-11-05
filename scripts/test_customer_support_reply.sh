@@ -110,7 +110,7 @@ CSRF_TOKEN=$(echo "$LOGIN_PAGE" | grep -oP 'name="_csrf_token" value="\K[^"]+' |
 
 curl -s -b "$COOKIE_TEST" -c "$COOKIE_TEST" -X POST "$BASE_URL/admin/login.php" \
   -d "_csrf_token=$CSRF_TOKEN&email=$TEST_ADMIN_EMAIL&password=password" > /dev/null
-sleep 0.05
+sleep 0.2
 
 DETAIL_PAGE=$(curl -s -b "$COOKIE_TEST" -c "$COOKIE_TEST" "$BASE_URL/admin/messages/detail.php?id=$TEST_MSG_ID")
 DETAIL_CSRF=$(echo "$DETAIL_PAGE" | grep -oP 'name="_csrf_token" value="\K[^"]+' | head -1)
@@ -118,7 +118,7 @@ DETAIL_CSRF=$(echo "$DETAIL_PAGE" | grep -oP 'name="_csrf_token" value="\K[^"]+'
 # Submit reply via POST
 curl -s -b "$COOKIE_TEST" -c "$COOKIE_TEST" -X POST "$BASE_URL/admin/messages/detail.php?id=$TEST_MSG_ID" \
   -d "_csrf_token=$DETAIL_CSRF&action=reply&reply_body=We+deliver+bulk+orders+via+courier." > /dev/null
-sleep 0.05
+sleep 0.2
 
 # Follow redirect via GET with cookie
 FOLLOW_RESP=$(curl -s -b "$COOKIE_TEST" -c "$COOKIE_TEST" "$BASE_URL/admin/messages/detail.php?id=$TEST_MSG_ID")
@@ -126,7 +126,7 @@ FOLLOW_RESP=$(curl -s -b "$COOKIE_TEST" -c "$COOKIE_TEST" "$BASE_URL/admin/messa
 rm -f "$COOKIE_TEST"
 run_sql "DELETE FROM user_roles WHERE user_id = (SELECT id FROM users WHERE email='$TEST_ADMIN_EMAIL'); DELETE FROM users WHERE email='$TEST_ADMIN_EMAIL';"
 
-if echo "$FOLLOW_RESP" | grep -q "Reply email queued and sent" && echo "$FOLLOW_RESP" | grep -q "Alice Wambui"; then
+if [[ "$FOLLOW_RESP" == *"Reply email queued and sent"* && "$FOLLOW_RESP" == *"Alice Wambui"* ]]; then
     pass "Admin message detail view renders successfully with flash message (no variable collision)"
 else
     fail "Admin message detail view failed to render flash message"
