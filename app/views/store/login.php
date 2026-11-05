@@ -117,20 +117,16 @@ include __DIR__ . '/partials/flash.php';
                                                 Sign In
                                             </button>
 
-                                            <?php if (GoogleAuthService::isConfigured()): ?>
-                                                <div class="separator text-center my-3 position-relative">
-                                                    <span class="bg-white px-2 text-muted small">or continue with</span>
-                                                </div>
+                                            <div class="separator text-center my-3 position-relative">
+                                                <span class="bg-white px-2 text-muted small">or continue with</span>
+                                            </div>
 
-                                                <div class="social-buttons">
-                                                    <a href="<?= e(url('auth/google' . (!empty($returnUrl) ? '?next=' . urlencode($returnUrl) : ''))) ?>" class="btn-social w-100 d-flex align-items-center justify-content-center text-decoration-none border rounded py-2 text-dark" data-testid="google-auth-button">
-                                                        <i class="bi bi-google me-2 text-danger"></i>
-                                                        <span>Continue with Google</span>
-                                                    </a>
-                                                </div>
-                                            <?php else: ?>
-                                                <!-- Google Sign-In unconfigured: <?= e(GoogleAuthService::getMissingConfigurationReason()) ?> -->
-                                            <?php endif; ?>
+                                            <div class="social-buttons">
+                                                <a href="<?= e(url('auth/google' . (!empty($returnUrl) ? '?next=' . urlencode($returnUrl) : ''))) ?>" class="btn-social w-100 d-flex align-items-center justify-content-center text-decoration-none border rounded py-2 text-dark" data-testid="google-auth-button" aria-label="Sign in with Google">
+                                                    <i class="bi bi-google me-2 text-danger"></i>
+                                                    <span>Sign in with Google</span>
+                                                </a>
+                                            </div>
                                         </form>
                                     </div><!-- End Login Form -->
 

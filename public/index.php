@@ -1418,9 +1418,8 @@ $router->post('/verify-email/resend', function () use ($cartService) {
  * ------------------------------------------------------------------------- */
 $router->get('/auth/google', function () {
     if (!GoogleAuthService::isConfigured()) {
-        http_response_code(503);
-        echo 'Google Sign-In is not currently configured.';
-        exit;
+        flash_set('error', 'Google Sign-In is not currently configured. Please sign in with your email and password.');
+        redirect('login');
     }
 
     $returnUrl = CustomerAuthService::sanitizeReturnUrl($_GET['next'] ?? null);
@@ -1434,9 +1433,8 @@ $router->get('/auth/google', function () {
  * ------------------------------------------------------------------------- */
 $router->get('/auth/google/callback', function () {
     if (!GoogleAuthService::isConfigured()) {
-        http_response_code(503);
-        echo 'Google Sign-In is not currently configured.';
-        exit;
+        flash_set('error', 'Google Sign-In is not currently configured. Please sign in with your email and password.');
+        redirect('login');
     }
 
     $clientIp = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';

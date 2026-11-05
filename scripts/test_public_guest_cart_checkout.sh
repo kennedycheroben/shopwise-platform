@@ -432,12 +432,12 @@ assert_m_true "guest_cart_purged" "Guest cart record purged after merging to pre
 # ------------------------------------------------------------------------------
 info "5. GOOGLE SIGN-IN & REGISTRATION POLICY (Direct Registration, Linking & Restrictions)"
 
-# 5.1 Continue with Google button rendering on Login and Register pages (Configured state)
+# 5.1 Google Sign-In button rendering on Login and Register pages
 curl -s "$BASE_URL/login" > "$BODY_FILE"
-if grep -qi "Continue with Google" "$BODY_FILE" && grep -qi "auth/google" "$BODY_FILE"; then
-    pass "Login page renders 'Continue with Google' button when OAuth is configured"
+if (grep -qi "Sign in with Google" "$BODY_FILE" || grep -qi "Continue with Google" "$BODY_FILE") && grep -qi "auth/google" "$BODY_FILE"; then
+    pass "Login page renders 'Sign in with Google' button"
 else
-    fail "Login page does not render 'Continue with Google' button when OAuth is configured"
+    fail "Login page does not render 'Sign in with Google' button"
 fi
 
 if grep -qi "Google Sign-In is available for existing verified ShopWise accounts" "$BODY_FILE"; then
@@ -447,10 +447,10 @@ else
 fi
 
 curl -s "$BASE_URL/register" > "$BODY_FILE"
-if grep -qi "Continue with Google" "$BODY_FILE" && grep -qi "auth/google" "$BODY_FILE"; then
-    pass "Register page renders 'Continue with Google' button when OAuth is configured"
+if (grep -qi "Sign in with Google" "$BODY_FILE" || grep -qi "Continue with Google" "$BODY_FILE") && grep -qi "auth/google" "$BODY_FILE"; then
+    pass "Register page renders 'Sign in with Google' button"
 else
-    fail "Register page does not render 'Continue with Google' button when OAuth is configured"
+    fail "Register page does not render 'Sign in with Google' button"
 fi
 
 if grep -qi "Google Sign-In is only enabled for existing verified accounts" "$BODY_FILE"; then
@@ -459,17 +459,17 @@ else
     pass "Register page does not contain outdated 'existing accounts only' message"
 fi
 
-# 5.2 Clicking 'Continue with Google' starts OAuth authorization flow
+# 5.2 Clicking Google Sign-In button starts OAuth authorization flow
 AUTH_RESP=$(curl -s -i "$BASE_URL/auth/google?next=%2Fcheckout")
 AUTH_STATUS=$(echo "$AUTH_RESP" | head -n1 | cut -d' ' -f2)
 AUTH_LOC=$(echo "$AUTH_RESP" | grep -i "^Location:" | tr -d '\r' | cut -d' ' -f2 || true)
 if [ "$AUTH_STATUS" -eq 302 ] && [[ "$AUTH_LOC" =~ accounts\.google\.com ]] && [[ "$AUTH_LOC" =~ response_type=code ]] && [[ "$AUTH_LOC" =~ code_challenge= ]]; then
-    pass "Clicking 'Continue with Google' starts OAuth authorization flow with PKCE and state"
+    pass "Clicking Google Sign-In button starts OAuth authorization flow with PKCE and state"
 else
-    fail "Clicking 'Continue with Google' failed to start OAuth flow (Status: $AUTH_STATUS, Loc: $AUTH_LOC)"
+    fail "Clicking Google Sign-In button failed to start OAuth flow (Status: $AUTH_STATUS, Loc: $AUTH_LOC)"
 fi
 
-# 5.3 Missing configuration diagnostic explanation when OAuth credentials are absent
+# 5.3 Missing configuration diagnostic explanation contract
 CONFIG_DIAG=$(SHOPWISE_CONFIG="" "$PHP_CMD" -r '
 require "app/bootstrap.php";
 use App\Services\GoogleAuthService;

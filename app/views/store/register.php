@@ -42,20 +42,16 @@ include __DIR__ . '/partials/flash.php';
                             <p class="text-muted">Enjoy faster checkout, saved delivery addresses, and order history tracking.</p>
                         </div>
 
-                        <?php if (GoogleAuthService::isConfigured()): ?>
-                            <div class="social-auth text-center mb-4">
-                                <a href="<?= e(url('auth/google' . (!empty($returnUrl) ? '?next=' . urlencode($returnUrl) : ''))) ?>" class="auth-btn auth-google btn btn-outline-dark w-100 py-2 d-inline-flex align-items-center justify-content-center text-decoration-none" data-testid="google-auth-button">
-                                    <i class="bi bi-google me-2 text-danger"></i>
-                                    <span>Continue with Google</span>
-                                </a>
-                            </div>
+                        <div class="social-auth text-center mb-4">
+                            <a href="<?= e(url('auth/google' . (!empty($returnUrl) ? '?next=' . urlencode($returnUrl) : ''))) ?>" class="auth-btn auth-google btn btn-outline-dark w-100 py-2 d-inline-flex align-items-center justify-content-center text-decoration-none" data-testid="google-auth-button" aria-label="Sign in with Google">
+                                <i class="bi bi-google me-2 text-danger"></i>
+                                <span>Sign in with Google</span>
+                            </a>
+                        </div>
 
-                            <div class="divider-line text-center my-3 position-relative">
-                                <span class="bg-white px-3 text-muted small">or continue with email</span>
-                            </div>
-                        <?php else: ?>
-                            <!-- Google Sign-In unconfigured: <?= e(GoogleAuthService::getMissingConfigurationReason()) ?> -->
-                        <?php endif; ?>
+                        <div class="divider-line text-center my-3 position-relative">
+                            <span class="bg-white px-3 text-muted small">or continue with email</span>
+                        </div>
 
                         <?php if (!empty($error)): ?>
                             <div class="alert alert-danger py-2 small" role="alert">
