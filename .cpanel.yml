@@ -17,11 +17,8 @@ deployment:
     - /bin/cp composer.json ${APPPATH}/composer.json 2>/dev/null || true
     - /bin/cp composer.lock ${APPPATH}/composer.lock 2>/dev/null || true
     - /bin/cp -R public/assets/. ${DEPLOYPATH}/assets/
-    - /bin/cp public/robots.txt ${DEPLOYPATH}/robots.txt
-    - /bin/cp public/sitemap.xml ${DEPLOYPATH}/sitemap.xml
-    - /bin/cp public/favicon.ico ${DEPLOYPATH}/favicon.ico 2>/dev/null || true
     - /bin/cp public/.htaccess ${DEPLOYPATH}/.htaccess
-    - /bin/cp public/uploads/.htaccess ${DEPLOYPATH}/uploads/.htaccess
+    - /bin/cp public/uploads/.htaccess ${DEPLOYPATH}/uploads/.htaccess 2>/dev/null || true
     - /bin/bash -c 'echo "<?php declare(strict_types=1); require \"/home/xqtrqexj/shopwise-app/public/index.php\";" > ${DEPLOYPATH}/index.php'
     - /bin/bash -c 'find ${APPPATH}/public/admin -type f -name "*.php" | while read -r f; do rel="${f#${APPPATH}/public/admin/}"; dest="${DEPLOYPATH}/admin/${rel}"; /bin/mkdir -p "$(/usr/bin/dirname "$dest")"; echo "<?php declare(strict_types=1); require \"${f}\";" > "$dest"; done'
     - /usr/bin/find ${APPPATH} -type d -exec /bin/chmod 755 {} +
