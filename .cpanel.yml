@@ -17,6 +17,8 @@ deployment:
     - /bin/cp composer.json ${APPPATH}/composer.json 2>/dev/null || true
     - /bin/cp composer.lock ${APPPATH}/composer.lock 2>/dev/null || true
     - /bin/cp -R public/assets/. ${DEPLOYPATH}/assets/
+    - /bin/mkdir -p ${DEPLOYPATH}/admin/assets
+    - /bin/cp -R public/admin/assets/. ${DEPLOYPATH}/admin/assets/
     - /bin/cp public/.htaccess ${DEPLOYPATH}/.htaccess
     - /bin/cp public/uploads/.htaccess ${DEPLOYPATH}/uploads/.htaccess 2>/dev/null || true
     - /bin/bash -c 'echo "<?php declare(strict_types=1); require \"/home/xqtrqexj/shopwise-app/public/index.php\";" > ${DEPLOYPATH}/index.php'
