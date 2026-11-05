@@ -97,12 +97,12 @@ else
 fi
 
 # Verify end-to-end admin UI reply submission & flash rendering via HTTP
-TEST_ADMIN_EMAIL="msg.admin.$(date +%s)@example.com"
+TEST_ADMIN_EMAIL="msg.admin.$$.$(date +%s%N)@example.com"
 HASHED_PASS='$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi'
-run_sql "INSERT INTO users (role, first_name, last_name, email, password_hash, status, created_at, email_verified_at)
+run_sql "DELETE FROM login_attempts;
+         INSERT INTO users (role, first_name, last_name, email, password_hash, status, created_at, email_verified_at)
          VALUES ('super_admin', 'MsgAdmin', 'Tester', '$TEST_ADMIN_EMAIL', '$HASHED_PASS', 'active', NOW(), NOW());
-         INSERT INTO user_roles (user_id, role) VALUES (LAST_INSERT_ID(), 'super_admin');
-         DELETE FROM login_attempts WHERE ip = '127.0.0.1';"
+         INSERT INTO user_roles (user_id, role) VALUES (LAST_INSERT_ID(), 'super_admin');"
 
 COOKIE_TEST=$(mktemp)
 LOGIN_PAGE=$(curl -s -c "$COOKIE_TEST" "$BASE_URL/admin/login.php")
