@@ -82,7 +82,7 @@ class MailerService
         try {
             $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
             $mail->isSMTP();
-            $mail->Host       = $this->config['host'] ?? 'localhost';
+            $mail->Host       = $this->config['host'] ?? 'mail.kennedycheroben.co.ke';
             $mail->SMTPAuth   = true;
             $mail->Username   = $this->config['username'] ?? '';
             $mail->Password   = $this->config['password'] ?? '';

@@ -2,7 +2,7 @@
 
 ## 1. Hosting Architecture Overview
 
-The ShopWise Kenya platform is architected for deployment on **Truehost CloudLinux cPanel Shared Hosting** under a custom domain or subdomain (e.g. `shop.kennedycheroben.co.ke`).
+The ShopWise Kenya platform is architected for deployment on **Truehost CloudLinux cPanel Shared Hosting** under a custom domain or subdomain (e.g. `shopwise.kennedycheroben.co.ke`).
 
 - **Architecture:** Zero-dependency PHP application. Does NOT require Node.js production servers, Redis, Elasticsearch, Docker, or system daemon processes.
 - **Web Server:** Apache 2.4+ with `mod_rewrite`, `mod_headers`, `mod_expires`, `mod_authz_core`.
@@ -128,7 +128,7 @@ To guarantee complete isolation from public web traffic, store the production `.
 4. Populate production credentials:
    - `APP_ENV=production`
    - `APP_DEBUG=false`
-   - `APP_URL=https://shop.kennedycheroben.co.ke`
+   - `APP_URL=https://shopwise.kennedycheroben.co.ke`
    - `APP_KEY=<strong_random_64_character_hex_key>`
    - `DB_HOST=127.0.0.1`
    - `DB_PORT=3306`
@@ -137,7 +137,7 @@ To guarantee complete isolation from public web traffic, store the production `.
    - `DB_PASSWORD=<strong_random_db_password>`
    - `GOOGLE_CLIENT_ID=<production_client_id>.apps.googleusercontent.com`
    - `GOOGLE_CLIENT_SECRET=<production_client_secret>`
-   - `GOOGLE_REDIRECT_URI=https://shop.kennedycheroben.co.ke/auth/google/callback`
+   - `GOOGLE_REDIRECT_URI=https://shopwise.kennedycheroben.co.ke/auth/google/callback`
    - `MAIL_DRIVER=smtp`
    - `MAIL_HOST=mail.kennedycheroben.co.ke`
    - `MAIL_PORT=465`
@@ -150,6 +150,6 @@ To guarantee complete isolation from public web traffic, store the production `.
    - `MPESA_SHORTCODE=<production_business_shortcode>`
    - `MPESA_PASSKEY=<production_live_passkey>`
    - `MPESA_TRANSACTION_TYPE=CustomerPayBillOnline`
-   - `MPESA_CALLBACK_BASE_URL=https://shop.kennedycheroben.co.ke`
+   - `MPESA_CALLBACK_BASE_URL=https://shopwise.kennedycheroben.co.ke`
    - `MPESA_CALLBACK_SECRET=<secure_random_64_character_hex_secret>`
-5. Test HTTP blocking: Attempt to fetch `https://shop.kennedycheroben.co.ke/.env`. Verify an immediate `403 Forbidden` response.
+5. Test HTTP blocking: Attempt to fetch `https://shopwise.kennedycheroben.co.ke/.env`. Verify an immediate `403 Forbidden` response.

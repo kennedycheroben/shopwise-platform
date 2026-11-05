@@ -359,6 +359,9 @@ final class MpesaService
     {
         $cfg = self::getConfig();
         $baseUrl = rtrim((string)($cfg['callback_base_url'] ?? ''), '/');
+        if ($baseUrl === '') {
+            $baseUrl = rtrim(url(), '/');
+        }
         $secret = (string)($cfg['callback_secret'] ?? '');
         $url = $baseUrl . '/payments/callback/' . rawurlencode($secret);
 

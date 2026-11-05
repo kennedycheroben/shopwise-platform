@@ -110,6 +110,7 @@ CSRF_TOKEN=$(echo "$LOGIN_PAGE" | grep -oP 'name="_csrf_token" value="\K[^"]+' |
 
 curl -s -b "$COOKIE_TEST" -c "$COOKIE_TEST" -X POST "$BASE_URL/admin/login.php" \
   -d "_csrf_token=$CSRF_TOKEN&email=$TEST_ADMIN_EMAIL&password=password" > /dev/null
+sleep 0.05
 
 DETAIL_PAGE=$(curl -s -b "$COOKIE_TEST" -c "$COOKIE_TEST" "$BASE_URL/admin/messages/detail.php?id=$TEST_MSG_ID")
 DETAIL_CSRF=$(echo "$DETAIL_PAGE" | grep -oP 'name="_csrf_token" value="\K[^"]+' | head -1)
@@ -117,6 +118,7 @@ DETAIL_CSRF=$(echo "$DETAIL_PAGE" | grep -oP 'name="_csrf_token" value="\K[^"]+'
 # Submit reply via POST
 curl -s -b "$COOKIE_TEST" -c "$COOKIE_TEST" -X POST "$BASE_URL/admin/messages/detail.php?id=$TEST_MSG_ID" \
   -d "_csrf_token=$DETAIL_CSRF&action=reply&reply_body=We+deliver+bulk+orders+via+courier." > /dev/null
+sleep 0.05
 
 # Follow redirect via GET with cookie
 FOLLOW_RESP=$(curl -s -b "$COOKIE_TEST" -c "$COOKIE_TEST" "$BASE_URL/admin/messages/detail.php?id=$TEST_MSG_ID")

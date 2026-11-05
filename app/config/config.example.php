@@ -20,7 +20,7 @@ return [
         // Set explicitly or leave empty for auto-detection
         // Examples:
         // Local:      'http://localhost/shopwise-platform/public'
-        // Production: 'https://shop.kennedycheroben.co.ke'
+        // Production: 'https://shopwise.kennedycheroben.co.ke'
         'base_url'    => (string)\App\Config\Env::get('APP_URL', ''),
         'key'         => (string)\App\Config\Env::get('APP_KEY', ''),
         'timezone'    => (string)\App\Config\Env::get('APP_TIMEZONE', 'Africa/Nairobi'),

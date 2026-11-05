@@ -907,6 +907,7 @@ for iset in "${INVALID_SETTINGS[@]}"; do
     else
         fail "Settings validation failed to reject: $desc"
     fi
+    sleep 0.05
 done
 
 # 2. Valid values saved and audited

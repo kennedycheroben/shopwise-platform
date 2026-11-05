@@ -74,14 +74,20 @@ defined('SHOPWISE_TESTING_MODE') or define('SHOPWISE_TESTING_MODE', false);
 
 // Dynamic BASE_URL auto-detection if left empty
 if (empty($config['app']['base_url'])) {
-    if (php_sapi_name() === 'cli') {
+    if (($config['app']['environment'] ?? '') === 'production') {
+        $config['app']['base_url'] = 'https://shopwise.kennedycheroben.co.ke';
+    } elseif (php_sapi_name() === 'cli') {
         $config['app']['base_url'] = 'http://localhost/shopwise-platform/public';
     } else {
         $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ||
                    (!empty($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443) ||
                    (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && strtolower($_SERVER['HTTP_X_FORWARDED_PROTO']) === 'https');
         $scheme = $isHttps ? 'https' : 'http';
-        $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+        $host = $_SERVER['HTTP_HOST'] ?? 'shopwise.kennedycheroben.co.ke';
+        if ($host === 'localhost' && ($config['app']['environment'] ?? '') === 'production') {
+            $host = 'shopwise.kennedycheroben.co.ke';
+            $scheme = 'https';
+        }
         
         // Local installations expose /shopwise-platform/public; production
         // subdomains use public as Apache's document root.
