@@ -873,6 +873,7 @@ curl -s -L -c "$COOKIE_ADMIN" -b "$COOKIE_ADMIN" \
     -d "password=${TEST_PASSWORD}" \
     -d "_csrf_token=${LOGIN_CSRF}" \
     "$BASE_URL/admin/login.php" > /dev/null
+sleep 0.1
 
 SETTINGS_CSRF=$(get_csrf_token "$COOKIE_ADMIN" "$BASE_URL/admin/settings/index.php")
 
@@ -907,7 +908,7 @@ for iset in "${INVALID_SETTINGS[@]}"; do
     else
         fail "Settings validation failed to reject: $desc"
     fi
-    sleep 0.05
+    sleep 0.1
 done
 
 # 2. Valid values saved and audited
