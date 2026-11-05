@@ -126,12 +126,19 @@ final class Env
             return realpath($envVarPath) ?: $envVarPath;
         }
 
-        $projectRoot = dirname(__DIR__, 2);
+        $appDir = dirname(__DIR__, 2);
+        $projectRoot = dirname(__DIR__, 3);
+        $parentOfProject = dirname($projectRoot);
+
         $candidates = [
             $projectRoot . '/.env',
-            dirname($projectRoot) . '/shopwise-config/.env',
-            dirname($projectRoot) . '/.env',
-            dirname($projectRoot) . '/.env.shopwise',
+            $appDir . '/.env',
+            $parentOfProject . '/shopwise-config/.env',
+            $parentOfProject . '/.env',
+            $parentOfProject . '/.env.shopwise',
+            dirname($appDir) . '/shopwise-config/.env',
+            dirname($appDir) . '/.env',
+            dirname($appDir) . '/.env.shopwise',
         ];
 
         foreach ($candidates as $candidate) {
