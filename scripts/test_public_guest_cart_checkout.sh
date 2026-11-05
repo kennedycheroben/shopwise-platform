@@ -473,7 +473,14 @@ fi
 CONFIG_DIAG=$(SHOPWISE_CONFIG="" "$PHP_CMD" -r '
 require "app/bootstrap.php";
 use App\Services\GoogleAuthService;
-$hasDiag = !GoogleAuthService::isConfigured() && !empty(GoogleAuthService::getMissingConfigurationReason());
+use App\Config\Env;
+Env::set("GOOGLE_CLIENT_ID", "");
+Env::set("GOOGLE_CLIENT_SECRET", "");
+putenv("GOOGLE_CLIENT_ID=");
+putenv("GOOGLE_CLIENT_SECRET=");
+$isConf = GoogleAuthService::isConfigured();
+$reason = GoogleAuthService::getMissingConfigurationReason();
+$hasDiag = (!$isConf && !empty($reason) && str_contains($reason, "not configured"));
 echo $hasDiag ? "yes" : "no";
 ')
 if [ "$CONFIG_DIAG" = "yes" ]; then
