@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Config\Env;
 use App\Database\Database;
 use DateTime;
 use DateTimeZone;
@@ -144,7 +145,20 @@ final class MpesaService
     public static function getConfig(): array
     {
         $allConfig = require dirname(__DIR__, 2) . '/config/config.php';
-        return $allConfig['mpesa'] ?? [];
+        $cfg = $allConfig['mpesa'] ?? [];
+
+        // Ensure .env variables provide fallback if not populated in array
+        $cfg['env']                 = $cfg['env'] ?? (string)Env::get('MPESA_ENV', 'sandbox');
+        $cfg['consumer_key']        = $cfg['consumer_key'] ?? (string)Env::get('MPESA_CONSUMER_KEY', '');
+        $cfg['consumer_secret']     = $cfg['consumer_secret'] ?? (string)Env::get('MPESA_CONSUMER_SECRET', '');
+        $cfg['shortcode']           = $cfg['shortcode'] ?? (string)Env::get('MPESA_SHORTCODE', '174379');
+        $cfg['passkey']             = $cfg['passkey'] ?? (string)Env::get('MPESA_PASSKEY', '');
+        $cfg['transaction_type']    = $cfg['transaction_type'] ?? (string)Env::get('MPESA_TRANSACTION_TYPE', 'CustomerPayBillOnline');
+        $cfg['callback_base_url']   = $cfg['callback_base_url'] ?? (string)Env::get('MPESA_CALLBACK_BASE_URL', '');
+        $cfg['callback_secret']     = $cfg['callback_secret'] ?? (string)Env::get('MPESA_CALLBACK_SECRET', '');
+        $cfg['initiator_name']      = $cfg['initiator_name'] ?? (string)Env::get('MPESA_INITIATOR_NAME', 'testapi');
+
+        return $cfg;
     }
 
     /**

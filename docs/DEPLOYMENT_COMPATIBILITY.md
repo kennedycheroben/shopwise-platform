@@ -86,22 +86,70 @@ Add the following cron entries via cPanel **Cron Jobs**:
 
 ---
 
-## 6. Production Credentials & Configuration
+## 6. Production Credentials & Environment Configuration (`.env`)
 
-Copy `app/config/config.example.php` to `app/config/config.local.php` on the server and populate:
-- `app.environment` = `'production'`
-- `app.debug` = `false`
-- `app.base_url` = `'https://shop.kennedycheroben.co.ke'`
-- `db.database` = `<cpanel_user>_shopwise`
-- `db.username` = `<cpanel_user>_shopwise_user`
-- `db.password` = `<strong_random_password>`
-- `mpesa.env` = `'production'`
-- `mpesa.shortcode` = `<Paybill_or_Till_Number>`
-- `mpesa.passkey` = `<Live_Daraja_Passkey>`
-- `mpesa.callback_base_url` = `'https://shop.kennedycheroben.co.ke'`
-- `mpesa.callback_secret` = `<random_64_char_hex_secret>`
-- `mail.driver` = `'smtp'`
-- `mail.smtp.host` = `'mail.kennedycheroben.co.ke'`
-- `mail.smtp.username` = `'support@kennedycheroben.co.ke'`
-- `mail.smtp.password` = `<email_account_password>`
-- `mail.smtp.port` = `465` (SSL) or `587` (TLS)
+All sensitive production credentials and environment variables are centralized in a single `.env` file.
+`.env` is the single source of truth for secrets, passwords, tokens, API keys, and environment settings.
+
+### Recommended Production `.env` Location
+To guarantee complete isolation from public web traffic, store the production `.env` file outside of `public_html`:
+
+1. **Option 1 (Recommended - Dedicated Private Directory):**
+   `/home/<cpanel_user>/shopwise-config/.env`
+   Set environment variable in `.htaccess` or cPanel:
+   `SetEnv SHOPWISE_ENV_PATH /home/<cpanel_user>/shopwise-config/.env`
+
+2. **Option 2 (User Home Directory):**
+   `/home/<cpanel_user>/.env`
+   Automatically discovered by `App\Config\Env` if project root is a subfolder.
+
+3. **Option 3 (Project Root Outside public_html):**
+   `/home/<cpanel_user>/shopwise-platform/.env`
+   When Apache document root points to `/home/<cpanel_user>/shopwise-platform/public`.
+
+### Required File Permissions
+- Set `.env` permissions strictly to `0600` (Owner Read/Write only):
+  ```bash
+  chmod 600 /home/<cpanel_user>/shopwise-config/.env
+  ```
+- Ensure ownership belongs to your cPanel user (`chown <cpanel_user>:<cpanel_user> .env`).
+
+### Discovery Precedence
+`App\Config\Env` resolves configuration using the following order:
+1. `SHOPWISE_ENV_PATH` environment variable (if defined via server/cPanel `SetEnv`).
+2. Project root `.env` (`/path/to/shopwise-platform/.env`).
+3. Parent dedicated config folder: `../shopwise-config/.env`.
+4. Parent directory dotfiles: `../.env` or `../.env.shopwise`.
+
+### Production Deployment Procedure
+1. Deploy release code using Git or archive (excluding `.env`).
+2. In the private cPanel directory, copy `.env.example` to create `.env`.
+3. Set file permissions to `chmod 600 .env`.
+4. Populate production credentials:
+   - `APP_ENV=production`
+   - `APP_DEBUG=false`
+   - `APP_URL=https://shop.kennedycheroben.co.ke`
+   - `APP_KEY=<strong_random_64_character_hex_key>`
+   - `DB_HOST=127.0.0.1`
+   - `DB_PORT=3306`
+   - `DB_DATABASE=<cpanel_user>_shopwise`
+   - `DB_USERNAME=<cpanel_user>_shopwise_user`
+   - `DB_PASSWORD=<strong_random_db_password>`
+   - `GOOGLE_CLIENT_ID=<production_client_id>.apps.googleusercontent.com`
+   - `GOOGLE_CLIENT_SECRET=<production_client_secret>`
+   - `GOOGLE_REDIRECT_URI=https://shop.kennedycheroben.co.ke/auth/google/callback`
+   - `MAIL_DRIVER=smtp`
+   - `MAIL_HOST=mail.kennedycheroben.co.ke`
+   - `MAIL_PORT=465`
+   - `MAIL_USERNAME=support@kennedycheroben.co.ke`
+   - `MAIL_PASSWORD=<email_mailbox_password>`
+   - `MAIL_ENCRYPTION=ssl`
+   - `MPESA_ENV=production`
+   - `MPESA_CONSUMER_KEY=<production_daraja_consumer_key>`
+   - `MPESA_CONSUMER_SECRET=<production_daraja_consumer_secret>`
+   - `MPESA_SHORTCODE=<production_business_shortcode>`
+   - `MPESA_PASSKEY=<production_live_passkey>`
+   - `MPESA_TRANSACTION_TYPE=CustomerPayBillOnline`
+   - `MPESA_CALLBACK_BASE_URL=https://shop.kennedycheroben.co.ke`
+   - `MPESA_CALLBACK_SECRET=<secure_random_64_character_hex_secret>`
+5. Test HTTP blocking: Attempt to fetch `https://shop.kennedycheroben.co.ke/.env`. Verify an immediate `403 Forbidden` response.

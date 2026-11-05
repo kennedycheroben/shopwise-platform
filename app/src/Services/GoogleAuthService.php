@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Config\Env;
 use App\Database\Database;
 use LogicException;
 use PDO;
@@ -39,48 +40,87 @@ final class GoogleAuthService
             return null;
         }
         if (!$hasId && !$hasSecret) {
-            return 'Google OAuth Client ID and Client Secret are not configured in settings, environment variables, or config files.';
+            return 'Google OAuth Client ID and Client Secret are not configured in .env, environment variables, or config files.';
         }
         if (!$hasId) {
-            return 'Google OAuth Client ID is not configured (missing google_client_id setting, GOOGLE_CLIENT_ID environment variable, or config[google][client_id]).';
+            return 'Google OAuth Client ID is not configured (missing GOOGLE_CLIENT_ID in .env/environment or config[google][client_id]).';
         }
-        return 'Google OAuth Client Secret is not configured (missing google_client_secret setting, GOOGLE_CLIENT_SECRET environment variable, or config[google][client_secret]).';
+        return 'Google OAuth Client Secret is not configured (missing GOOGLE_CLIENT_SECRET in .env/environment or config[google][client_secret]).';
     }
 
+    /**
+     * Resolve Google OAuth Client ID.
+     * Precedence: .env / Environment -> Config files -> Legacy Database settings
+     */
     public static function getClientId(): string
     {
-        $id = setting('google_client_id');
-        if (!empty($id)) {
-            return (string)$id;
-        }
-
-        $envId = getenv('GOOGLE_CLIENT_ID') ?: ($_ENV['GOOGLE_CLIENT_ID'] ?? ($_SERVER['GOOGLE_CLIENT_ID'] ?? null));
+        // 1. Primary: .env / Environment variable
+        $envId = Env::get('GOOGLE_CLIENT_ID') ?: (getenv('GOOGLE_CLIENT_ID') ?: ($_ENV['GOOGLE_CLIENT_ID'] ?? ($_SERVER['GOOGLE_CLIENT_ID'] ?? null)));
         if (!empty($envId)) {
             return (string)$envId;
         }
 
+        // 2. Secondary: Config array (including testing overrides)
         $config = require dirname(__DIR__, 2) . '/config/config.php';
-        return (string)($config['google']['client_id'] ?? ($config['google_oauth']['client_id'] ?? ''));
-    }
-
-    public static function getClientSecret(): string
-    {
-        $secret = setting('google_client_secret');
-        if (!empty($secret)) {
-            return (string)$secret;
+        $cfgId = $config['google']['client_id'] ?? ($config['google_oauth']['client_id'] ?? null);
+        if (!empty($cfgId)) {
+            return (string)$cfgId;
         }
 
-        $envSecret = getenv('GOOGLE_CLIENT_SECRET') ?: ($_ENV['GOOGLE_CLIENT_SECRET'] ?? ($_SERVER['GOOGLE_CLIENT_SECRET'] ?? null));
+        // 3. Tertiary: Legacy database setting (transitional fallback)
+        $dbId = setting('google_client_id');
+        if (!empty($dbId)) {
+            return (string)$dbId;
+        }
+
+        return '';
+    }
+
+    /**
+     * Resolve Google OAuth Client Secret.
+     * Precedence: .env / Environment -> Config files -> Legacy Database settings
+     */
+    public static function getClientSecret(): string
+    {
+        // 1. Primary: .env / Environment variable
+        $envSecret = Env::get('GOOGLE_CLIENT_SECRET') ?: (getenv('GOOGLE_CLIENT_SECRET') ?: ($_ENV['GOOGLE_CLIENT_SECRET'] ?? ($_SERVER['GOOGLE_CLIENT_SECRET'] ?? null)));
         if (!empty($envSecret)) {
             return (string)$envSecret;
         }
 
+        // 2. Secondary: Config array (including testing overrides)
         $config = require dirname(__DIR__, 2) . '/config/config.php';
-        return (string)($config['google']['client_secret'] ?? ($config['google_oauth']['client_secret'] ?? ''));
+        $cfgSecret = $config['google']['client_secret'] ?? ($config['google_oauth']['client_secret'] ?? null);
+        if (!empty($cfgSecret)) {
+            return (string)$cfgSecret;
+        }
+
+        // 3. Tertiary: Legacy database setting (transitional fallback)
+        $dbSecret = setting('google_client_secret');
+        if (!empty($dbSecret)) {
+            return (string)$dbSecret;
+        }
+
+        return '';
     }
 
+    /**
+     * Resolve Google OAuth Redirect URI.
+     * Precedence: .env / Environment -> Config files -> Dynamic default
+     */
     public static function getRedirectUri(): string
     {
+        $envUri = Env::get('GOOGLE_REDIRECT_URI') ?: (getenv('GOOGLE_REDIRECT_URI') ?: ($_ENV['GOOGLE_REDIRECT_URI'] ?? ($_SERVER['GOOGLE_REDIRECT_URI'] ?? null)));
+        if (!empty($envUri)) {
+            return (string)$envUri;
+        }
+
+        $config = require dirname(__DIR__, 2) . '/config/config.php';
+        $cfgUri = $config['google']['redirect_uri'] ?? ($config['google_oauth']['redirect_uri'] ?? null);
+        if (!empty($cfgUri)) {
+            return (string)$cfgUri;
+        }
+
         return url('auth/google/callback');
     }
 

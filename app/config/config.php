@@ -1,8 +1,14 @@
 <?php
 /**
  * ShopWise Kenya - Main Configuration Loader
- * Merges default/example configuration with local environment overrides.
+ * Centralizes environment configuration from .env via App\Config\Env,
+ * merging defaults with optional local overrides and testing isolation.
  */
+
+if (!class_exists(\App\Config\Env::class)) {
+    require_once dirname(__DIR__) . '/src/Config/Env.php';
+}
+\App\Config\Env::load();
 
 $defaults = require __DIR__ . '/config.example.php';
 $local = [];

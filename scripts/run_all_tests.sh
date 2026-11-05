@@ -177,6 +177,7 @@ run_suite "customer_reply"   "scripts/test_customer_support_reply.sh"
 run_suite "rbac_revocation"  "scripts/test_rbac_revocation_regression.sh"
 run_suite "upload_security"  "scripts/test_upload_security.php" "php"
 run_suite "route_guard"      "scripts/test_test_route_guard.php" "php"
+run_suite "env_centralization" "scripts/test_env_centralization.php" "php"
 run_suite "browser_marketing" "scripts/test_browser_marketing.sh"
 run_suite "uat_15_steps"     "scripts/uat_15_steps.sh"
 run_suite "stock_parity"     "scripts/check_stock_parity.py" "python3"
@@ -312,6 +313,14 @@ parse_route_guard() {
     echo "${passed:-0} ${failed:-0}"
 }
 
+parse_env_centralization() {
+    local log="$TMP_OUT_DIR/env_centralization.log"
+    local clean_text=$(sed -r "s/\x1B\[[0-9;]*[a-zA-Z]//g" "$log")
+    local passed=$(echo "$clean_text" | grep -oP 'SUMMARY:\s*\K[0-9]+' | tail -n 1 || echo 0)
+    local failed=$(echo "$clean_text" | grep -oP 'Passed,\s*\K[0-9]+(?=\s*Failed)' | tail -n 1 || echo 0)
+    echo "${passed:-0} ${failed:-0}"
+}
+
 parse_browser_marketing() {
     local log="$TMP_OUT_DIR/browser_marketing.log"
     if [ "${SUITE_EXITS["browser_marketing"]:-1}" -eq 0 ] && grep -q "ALL BROWSER VERIFICATION CHECKS PASSED" "$log"; then
@@ -402,6 +411,7 @@ report_row "customer_reply"   "test_customer_reply" parse_reply
 report_row "rbac_revocation"  "test_rbac_revocation" parse_rbac
 report_row "upload_security"  "test_upload_security" parse_upload_sec
 report_row "route_guard"      "test_route_guard"    parse_route_guard
+report_row "env_centralization" "test_env_centralization" parse_env_centralization
 report_row "browser_marketing" "browser_marketing"   parse_browser_marketing
 report_row "uat_15_steps"     "uat_15_steps.sh"     parse_uat
 report_row "stock_parity"     "check_stock_parity"  parse_parity
