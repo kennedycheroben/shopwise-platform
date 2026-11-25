@@ -993,7 +993,7 @@ try {
 }
 $res['bad_signature_rejected'] = $caughtSig;
 
-// 3. New Google identity automatically registers a new ShopWise customer account.
+// 3. Unknown Google identities must not silently create ShopWise accounts.
 $newGoogleEmail = "new_google_{$runId}@test.local";
 $newPayload = $basePayload;
 $newPayload['email'] = $newGoogleEmail;
@@ -1013,21 +1013,14 @@ $newSession = [
 ];
 $_SESSION[GoogleAuthService::STATE_SESSION_KEY] = $newSession;
 [$newOk, $newData] = GoogleAuthService::handleCallback(['state' => $newSession['state'], 'code' => 'mock-code'], $ip);
-$res['new_google_user_registered'] = $newOk;
+$res['unknown_google_user_rejected'] = !$newOk;
 
 $stmtNew = $pdo->prepare("SELECT id, role, status, email_verified_at, google_id FROM users WHERE email = :e");
 $stmtNew->execute([':e' => $newGoogleEmail]);
 $newUserRow = $stmtNew->fetch(PDO::FETCH_ASSOC);
 $newUserId = (int)($newUserRow['id'] ?? 0);
 
-$res['new_google_user_session_created'] = (
-    $newUserId > 0 &&
-    $newUserRow['role'] === 'customer' &&
-    $newUserRow['status'] === 'active' &&
-    !empty($newUserRow['email_verified_at']) &&
-    $newUserRow['google_id'] === $newPayload['sub'] &&
-    ((int)($_SESSION[CustomerAuthService::SESSION_KEY]['id'] ?? 0) === $newUserId)
-);
+$res['unknown_google_user_not_created'] = ($newUserId === 0);
 $res['new_user_id'] = $newUserId;
 
 // 4. A pre-existing, verified ShopWise customer can link and use Google sign-in.
@@ -1063,6 +1056,16 @@ $res['existing_password_preserved'] = password_verify($existingPassword, $linked
 $res['existing_email_stays_verified'] = !empty($linkedUser['email_verified_at']);
 $res['existing_google_id_linked'] = (($linkedUser['google_id'] ?? '') === $linkPayload['sub']);
 $res['existing_customer_session_created'] = ((int)($_SESSION[CustomerAuthService::SESSION_KEY]['id'] ?? 0) === $existingId);
+
+// 4b. A linked Google subject cannot authenticate with a different email.
+$mismatchPayload = $linkPayload;
+$mismatchPayload['email'] = "mismatch_{$runId}@test.local";
+$stubClient->setIdToken($signJwt($mismatchPayload, $resKey, $kid));
+$mismatchSession = $linkSession;
+$mismatchSession['state'] = 'mismatch_state_' . $runId;
+$_SESSION[GoogleAuthService::STATE_SESSION_KEY] = $mismatchSession;
+[$mismatchOk, $mismatchData] = GoogleAuthService::handleCallback(['state' => $mismatchSession['state'], 'code' => 'mock-code'], $ip);
+$res['linked_email_mismatch_rejected'] = !$mismatchOk;
 
 // 5. Existing unverified account: when verified Google email matches, link identity and mark email verified without touching password.
 $unverEmail = "unverified_google_{$runId}@test.local";
@@ -1142,13 +1145,14 @@ assert_g_true "expired_token_rejected" "ID token validation strictly rejects exp
 assert_g_true "wrong_nonce_rejected" "ID token validation strictly rejects nonce mismatch"
 assert_g_true "unverified_email_rejected" "Google account with unverified email is strictly refused"
 assert_g_true "bad_signature_rejected" "Tampered or invalid token RS256 signature is rejected"
-assert_g_true "new_google_user_registered" "New customer automatically registered via Google with customer role"
-assert_g_true "new_google_user_session_created" "New customer session created with verified email"
+assert_g_true "unknown_google_user_rejected" "Unknown Google identity is rejected without auto-registration"
+assert_g_true "unknown_google_user_not_created" "Rejected Google identity does not create a customer row"
 assert_g_true "existing_customer_linked" "Verified existing ShopWise customer can link Google"
 assert_g_true "existing_password_preserved" "Linking Google does not remove or replace the customer's password"
 assert_g_true "existing_email_stays_verified" "Verified existing account retains its verified email state"
 assert_g_true "existing_google_id_linked" "Google subject is stored on the existing customer account"
 assert_g_true "existing_customer_session_created" "Successful Google link creates the normal customer session"
+assert_g_true "linked_email_mismatch_rejected" "A linked Google subject cannot authenticate with a mismatched email"
 assert_g_true "unverified_existing_account_linked" "Unverified existing account is verified and linked via verified Google identity"
 assert_g_true "unverified_password_preserved" "Linking unverified account preserves existing password hash"
 assert_g_true "unverified_email_now_verified" "Linking unverified account updates email verification timestamp"

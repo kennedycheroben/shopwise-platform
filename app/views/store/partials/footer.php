@@ -19,7 +19,7 @@ $footerCategories = array_slice($catalogService->getCategoryTree(), 0, 6);
                 <div class="col-lg-4 col-md-6 col-sm-12">
                     <div class="footer-widget footer-about">
                         <a href="<?= e(url('/')) ?>" class="logo text-decoration-none">
-                            <span class="sitename"><?= e(setting('store_name', 'ShopWise Kenya')) ?></span>
+                            <img src="<?= e(asset('assets/brand/shopwise-logo.svg')) ?>" alt="ShopWise" class="shopwise-footer-logo">
                         </a>
                         <p class="mt-2 text-muted"><?= e(setting('store_tagline', 'Quality everyday essentials, delivered across Kenya.')) ?></p>
                         <div class="footer-contact mt-3">

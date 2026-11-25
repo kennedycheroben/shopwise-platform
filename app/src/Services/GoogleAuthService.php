@@ -311,6 +311,20 @@ final class GoogleAuthService
             }
         }
 
+        // Google rotates signing keys. A cached set may legitimately miss a
+        // newly-issued kid, so refresh once before rejecting an otherwise
+        // well-formed token.
+        if (!$matchedKey) {
+            self::$jwksCache = null;
+            self::$jwksCacheTime = 0;
+            foreach (self::getJwks() as $k) {
+                if (($k['kid'] ?? '') === $kid) {
+                    $matchedKey = $k;
+                    break;
+                }
+            }
+        }
+
         if (!$matchedKey) {
             throw new RuntimeException("Public key with kid '{$kid}' not found in Google JWKS.");
         }
@@ -338,20 +352,33 @@ final class GoogleAuthService
             throw new RuntimeException("Invalid token issuer '{$iss}'.");
         }
 
-        $aud = $payload['aud'] ?? '';
-        if ($aud !== self::getClientId()) {
-            throw new RuntimeException("Audience mismatch: expected '" . self::getClientId() . "', got '{$aud}'.");
+        $aud = $payload['aud'] ?? null;
+        $clientId = self::getClientId();
+        $audiences = is_array($aud) ? $aud : [$aud];
+        if (!in_array($clientId, $audiences, true)) {
+            throw new RuntimeException('Audience mismatch.');
+        }
+        if (is_array($aud) && !empty($payload['azp']) && $payload['azp'] !== $clientId) {
+            throw new RuntimeException('Authorized-party mismatch.');
         }
 
         $now = time();
         $exp = (int)($payload['exp'] ?? 0);
+        $iat = (int)($payload['iat'] ?? 0);
+        $nbf = (int)($payload['nbf'] ?? 0);
+        if ($exp <= 0) {
+            throw new RuntimeException('ID token is missing an expiry time.');
+        }
         if ($exp < ($now - 60)) { // 60s clock skew leeway
-            throw new RuntimeException("ID token has expired (exp: {$exp}, now: {$now}).");
+            throw new RuntimeException('ID token has expired.');
+        }
+        if (($iat > 0 && $iat > ($now + 60)) || ($nbf > 0 && $nbf > ($now + 60))) {
+            throw new RuntimeException('ID token is not yet valid.');
         }
 
         $tokenNonce = (string)($payload['nonce'] ?? '');
-        if ($tokenNonce !== $expectedNonce) {
-            throw new RuntimeException("Token nonce mismatch.");
+        if ($expectedNonce === '' || !hash_equals($expectedNonce, $tokenNonce)) {
+            throw new RuntimeException('Token nonce mismatch.');
         }
 
         $sub = (string)($payload['sub'] ?? '');
@@ -379,7 +406,11 @@ final class GoogleAuthService
         $savedSession = $_SESSION[self::STATE_SESSION_KEY] ?? null;
         unset($_SESSION[self::STATE_SESSION_KEY]);
 
-        if (!is_array($savedSession)) {
+        if (!is_array($savedSession)
+            || !is_string($savedSession['state'] ?? null)
+            || !is_string($savedSession['nonce'] ?? null)
+            || !is_string($savedSession['code_verifier'] ?? null)
+        ) {
             return [false, 'Sign-in session expired or invalid. Please try again.'];
         }
 
@@ -427,11 +458,13 @@ final class GoogleAuthService
                 'Accept'       => 'application/json',
             ]);
         } catch (\Throwable $e) {
-            return [false, 'Network connection to Google token service failed: ' . $e->getMessage()];
+            error_log('Google OAuth token exchange failed: ' . $e->getMessage());
+            return [false, 'Google sign-in is temporarily unavailable. Please try again.'];
         }
 
         if ($response['status'] !== 200) {
-            return [false, "Google token exchange failed (HTTP {$response['status']})."];
+            error_log("Google OAuth token exchange returned HTTP {$response['status']}.");
+            return [false, 'Google sign-in could not be completed. Please try again.'];
         }
 
         $tokenData = json_decode($response['body'], true);
@@ -443,7 +476,8 @@ final class GoogleAuthService
         try {
             $claims = self::verifyIdToken($tokenData['id_token'], $savedSession['nonce']);
         } catch (\Throwable $e) {
-            return [false, 'Google ID token verification failed: ' . $e->getMessage()];
+            error_log('Google ID token verification failed: ' . $e->getMessage());
+            return [false, 'Google sign-in could not be verified. Please try again.'];
         }
 
         $googleId = (string)$claims['sub'];
@@ -482,6 +516,12 @@ final class GoogleAuthService
             }
             if ($existingByGoogle['status'] !== 'active') {
                 return [false, 'Your account is currently inactive or suspended. Please contact support.'];
+            }
+            if (!hash_equals(
+                CustomerAuthService::normalizeEmail((string)$existingByGoogle['email']),
+                $email
+            )) {
+                return [false, 'The Google account email does not match the linked ShopWise account.'];
             }
 
             // Update email_verified_at if Google claims email is verified and local account was unverified
@@ -645,74 +685,9 @@ final class GoogleAuthService
             return [true, ['message' => 'Welcome back!', 'user' => $linkedUser, 'return_url' => $returnUrl], $linkedUser, $returnUrl];
         }
 
-        // 3. New customer account creation (Direct Google Registration)
-        $cleanFirst = preg_replace('/[^\p{L} \'\-]/u', '', $firstName);
-        $cleanFirst = trim(preg_replace('/\s+/', ' ', $cleanFirst));
-        if ($cleanFirst === '') {
-            $cleanFirst = 'Google';
-        }
-        $cleanLast = preg_replace('/[^\p{L} \'\-]/u', '', $lastName);
-        $cleanLast = trim(preg_replace('/\s+/', ' ', $cleanLast));
-        if ($cleanLast === '') {
-            $cleanLast = 'Customer';
-        }
-
-        $emailVerifiedAt = !empty($claims['email_verified']) ? date('Y-m-d H:i:s') : null;
-
-        try {
-            $pdo->beginTransaction();
-
-            $insertStmt = $pdo->prepare("
-                INSERT INTO users (role, first_name, last_name, email, google_id, avatar_url, status, email_verified_at, last_login_at, created_at, updated_at)
-                VALUES ('customer', :first, :last, :email, :gid, :avatar, 'active', :verified_at, NOW(), NOW(), NOW())
-            ");
-            $insertStmt->execute([
-                ':first'       => mb_substr($cleanFirst, 0, 100),
-                ':last'        => mb_substr($cleanLast, 0, 100),
-                ':email'       => $email,
-                ':gid'         => $googleId,
-                ':avatar'      => $avatarUrl,
-                ':verified_at' => $emailVerifiedAt,
-            ]);
-            $newId = (int)$pdo->lastInsertId();
-
-            $pdo->commit();
-        } catch (\Throwable $e) {
-            if ($pdo->inTransaction()) {
-                $pdo->rollBack();
-            }
-            return [false, 'Failed to create ShopWise account with Google: ' . $e->getMessage()];
-        }
-
-        $stmt = $pdo->prepare("
-            SELECT id, role, first_name, last_name, email, phone, status, google_id, avatar_url, email_verified_at, created_at
-            FROM users
-            WHERE id = :id AND role = 'customer' AND status = 'active'
-            LIMIT 1
-        ");
-        $stmt->execute([':id' => $newId]);
-        $newUser = $stmt->fetch(PDO::FETCH_ASSOC);
-        if (!$newUser) {
-            return [false, 'Unable to initialize your new ShopWise account. Please try again.'];
-        }
-
-        if (session_status() === PHP_SESSION_ACTIVE) {
-            session_regenerate_id(true);
-        }
-        $newUser['auth_time'] = time();
-        $_SESSION[CustomerAuthService::SESSION_KEY] = $newUser;
-
-        $guestToken = $_COOKIE[CartService::COOKIE_NAME] ?? null;
-        if (!empty($guestToken) && is_string($guestToken)) {
-            $cartService = new CartService($pdo);
-            $cartService->mergeGuestCart($newId, $guestToken);
-        }
-
-        AuditLogger::log($newId, 'customer_registered_google', 'user', $newId, [
-            'email' => $email,
-        ], $ip);
-
-        $returnUrl = $savedSession['return_url'] ?? '/account';
-        return [true, ['message' => 'Account created successfully with Google.', 'user' => $newUser, 'return_url' => $returnUrl], $newUser, $returnUrl];
+        // Google sign-in is deliberately existing-account-only. Customers can
+        // register with email/password first, then link Google after Google
+        // proves ownership of the exact, verified email address.
+        return [false, 'No ShopWise customer account matches this verified Google email. Please register with email and password first.'];
     }
 }

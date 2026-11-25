@@ -576,6 +576,8 @@ function check_route_rate_limit(string $key, int $maxAttempts, int $windowSecond
  * Storefront checkout view
  */
 $router->get('/checkout', function () use ($cartService) {
+    CustomerAuthService::requireLogin('/checkout');
+
     if (!\App\Services\MpesaService::isConfigured()) {
         flash_set('info', 'Checkout opens soon. M-Pesa is not currently configured.');
         redirect('cart');
@@ -595,6 +597,8 @@ $router->get('/checkout', function () use ($cartService) {
  * Real-time dynamic delivery fee, discount & total calculation for display
  */
 $router->post('/checkout/quote', function () use ($cartService) {
+    CustomerAuthService::requireLogin('/checkout');
+
     if (!\App\Services\MpesaService::isConfigured()) {
         send_json_response(['success' => false, 'error' => 'Checkout is currently disabled.'], 400);
     }

@@ -24,7 +24,7 @@ $displayRole = !empty($adminUser['roles'])
     <!-- Header Left -->
     <div class="header-left">
         <a href="<?= e($homeUrl) ?>" class="header-logo">
-            <img src="<?= e(asset('admin/assets/img/logo.webp')) ?>" alt="ShopWise Kenya">
+            <img src="<?= e(asset('assets/brand/shopwise-symbol.svg')) ?>" alt="ShopWise Kenya">
             <span>ShopWise Kenya</span>
         </a>
         <button class="sidebar-toggle" title="Toggle Sidebar" type="button">

@@ -48,7 +48,7 @@ $ogImageFinal = $ogImage ?? $defaultOgImage;
         '@type'    => 'Organization',
         'name'     => setting('store_name', 'ShopWise Kenya'),
         'url'      => url('/'),
-        'logo'     => asset('assets/img/logo.webp'),
+        'logo'     => asset('assets/brand/shopwise-logo.svg'),
         'contactPoint' => [
             '@type'             => 'ContactPoint',
             'telephone'         => setting('support_phone', '+254 700 000 000'),
@@ -152,8 +152,8 @@ $ogImageFinal = $ogImage ?? $defaultOgImage;
     <?php endif; ?>
 
     <!-- Favicons -->
-    <link href="<?= e(asset('assets/img/favicon.png')) ?>" rel="icon">
-    <link href="<?= e(asset('assets/img/apple-touch-icon.png')) ?>" rel="apple-touch-icon">
+    <link href="<?= e(asset('assets/brand/shopwise-favicon.svg')) ?>" rel="icon" type="image/svg+xml">
+    <link href="<?= e(asset('assets/brand/shopwise-touch-icon.svg')) ?>" rel="apple-touch-icon">
 
     <!-- Fonts -->
     <link href="https://fonts.googleapis.com" rel="preconnect">

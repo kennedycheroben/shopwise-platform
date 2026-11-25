@@ -244,6 +244,18 @@ h6 {
     margin-right: 8px;
 }
 
+.header .main-bar .logo .shopwise-logo {
+    height: 46px;
+    max-width: 210px;
+    margin-right: 0;
+}
+
+.shopwise-footer-logo {
+    height: 38px;
+    width: auto;
+    max-width: 190px;
+}
+
 .header .main-bar .logo h1 {
     font-size: 24px;
     margin: 0;
