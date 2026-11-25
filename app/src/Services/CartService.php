@@ -702,24 +702,23 @@ class CartService
             return;
         }
 
-        // Find the guest cart by session token
-        $stmt = $this->pdo->prepare("SELECT * FROM carts WHERE session_token = ? LIMIT 1");
-        $stmt->execute([$guestToken]);
-        $guestCart = $stmt->fetch();
-
-        if (!$guestCart) {
-            return;
-        }
-
-        $guestCartId = (int)$guestCart['id'];
-
-        // Find customer's existing cart by user_id
-        $stmt = $this->pdo->prepare("SELECT * FROM carts WHERE user_id = ? ORDER BY id DESC LIMIT 1");
-        $stmt->execute([$userId]);
-        $userCart = $stmt->fetch();
-
         $this->pdo->beginTransaction();
         try {
+            // Lock both cart records before reading items. This makes two
+            // concurrent authentication callbacks converge on one merge.
+            $stmt = $this->pdo->prepare("SELECT * FROM carts WHERE session_token = ? LIMIT 1 FOR UPDATE");
+            $stmt->execute([$guestToken]);
+            $guestCart = $stmt->fetch();
+            if (!$guestCart) {
+                $this->pdo->commit();
+                return;
+            }
+            $guestCartId = (int)$guestCart['id'];
+
+            $stmt = $this->pdo->prepare("SELECT * FROM carts WHERE user_id = ? ORDER BY id DESC LIMIT 1 FOR UPDATE");
+            $stmt->execute([$userId]);
+            $userCart = $stmt->fetch();
+
             if (!$userCart) {
                 // If customer has no existing cart, attach user_id to guest cart
                 $stmt = $this->pdo->prepare("UPDATE carts SET user_id = ?, updated_at = NOW() WHERE id = ?");

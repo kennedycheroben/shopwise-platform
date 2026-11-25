@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
-  <title id="title">ShopWise symbol</title>
-  <desc id="desc">Geometric orange shopping basket symbol</desc>
-  <path d="M13 22h13l7 42h45l8-31H29" fill="none" stroke="#f28c28" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M42 22 54 10l12 12M54 10v22M66 22 78 10" fill="none" stroke="#f28c28" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="44" cy="78" r="5" fill="#12233f"/>
-  <circle cx="75" cy="78" r="5" fill="#12233f"/>
-</svg>

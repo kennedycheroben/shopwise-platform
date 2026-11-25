@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" role="img" aria-labelledby="title desc">
+  <title id="title">ShopWise</title>
+  <desc id="desc">ShopWise shopping cart mark</desc>
+  <rect width="180" height="180" rx="36" fill="#fff"/>
+  <path d="M28 48h24l13 79h74l14-58H59M82 48l22-25 22 25M104 23v58" fill="none" stroke="#092d63" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M14 71h24M14 91h30M14 111h24" fill="none" stroke="#ff8b0b" stroke-width="9" stroke-linecap="round"/>
+  <circle cx="82" cy="149" r="9" fill="#092d63"/>
+  <circle cx="138" cy="149" r="9" fill="#092d63"/>
+</svg>

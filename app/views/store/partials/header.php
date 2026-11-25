@@ -47,7 +47,7 @@ $headerWishlistCount = $currentCustomer ? WishlistService::getCount((int)$curren
                 <!-- Logo -->
                 <div class="col-auto">
                     <a href="<?= e(url('/')) ?>" class="logo d-flex align-items-center text-decoration-none">
-                        <img src="<?= e(asset('assets/brand/shopwise-logo.svg')) ?>" alt="ShopWise" class="shopwise-logo">
+                        <img src="<?= e(asset('assets/brand/shopwise-logo.png')) ?>" alt="ShopWise" class="shopwise-logo">
                     </a>
                 </div>
 

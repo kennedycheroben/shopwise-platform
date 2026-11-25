@@ -18,6 +18,7 @@ export SHOPWISE_CONFIG="testing"
 
 BASE_URL="${BASE_URL:-http://127.0.0.1/shopwise-platform/public}"
 BASE_URL="${BASE_URL%/}"
+APP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 MYSQL_CMD="${MYSQL_CMD:-/opt/lampp/bin/mysql}"
 if [ ! -x "$MYSQL_CMD" ]; then
@@ -136,7 +137,7 @@ PRE_MOVEMENTS=$(run_sql "SELECT COUNT(*) FROM inventory_movements;" | tail -n 1)
 PRE_MOVEMENTS_MAX_ID=$(run_sql "SELECT COALESCE(MAX(id), 0) FROM inventory_movements;" | tail -n 1)
 
 PRE_STOCK=$(run_sql "SELECT COALESCE(SUM(stock_qty), 0) FROM product_variants;" | tail -n 1)
-PRE_UPLOAD_FILES=$(find /opt/lampp/htdocs/shopwise-platform/public/uploads -type f ! -name ".gitkeep" 2>/dev/null | wc -l)
+PRE_UPLOAD_FILES=$(find "$APP_ROOT/public/uploads" -type f ! -name ".gitkeep" 2>/dev/null | wc -l)
 
 echo "  Baseline products:            $PRE_PRODUCTS"
 echo "  Baseline product_variants:    $PRE_VARIANTS"
@@ -232,7 +233,7 @@ cleanup() {
     run_sql "DELETE FROM audit_log WHERE id > $PRE_AUDIT_MAX_ID;" >/dev/null 2>&1 || true
 
     # 7. Clean test rate limits
-    rm -f /opt/lampp/htdocs/shopwise-platform/app/storage/rate_limits_test/*.json 2>/dev/null || true
+    rm -f "$APP_ROOT/app/storage/rate_limits_test"/*.json 2>/dev/null || true
 
     # 8. Clean up temp directory
     rm -rf "$TMP_DIR"
@@ -922,7 +923,7 @@ else
 fi
 
 # Clear rate limits before testing IP limit
-rm -f /opt/lampp/htdocs/shopwise-platform/app/storage/rate_limits_test/*.json 2>/dev/null || true
+rm -f "$APP_ROOT/app/storage/rate_limits_test"/*.json 2>/dev/null || true
 
 info "Testing cart IP rate limiter (300 writes/min per IP cap across multiple sessions)"
 IP_429_HIT=0
@@ -948,7 +949,7 @@ else
 fi
 
 # Clear rate limits after test so subsequent tests have a fresh state
-rm -f /opt/lampp/htdocs/shopwise-platform/app/storage/rate_limits_test/*.json 2>/dev/null || true
+rm -f "$APP_ROOT/app/storage/rate_limits_test"/*.json 2>/dev/null || true
 
 
 # ==============================================================================
@@ -1081,7 +1082,7 @@ POST_USERS=$(run_sql "SELECT COUNT(*) FROM users;" | tail -n 1)
 POST_EMAIL=$(run_sql "SELECT COUNT(*) FROM email_queue;" | tail -n 1)
 POST_MOVEMENTS=$(run_sql "SELECT COUNT(*) FROM inventory_movements;" | tail -n 1)
 POST_STOCK=$(run_sql "SELECT COALESCE(SUM(stock_qty), 0) FROM product_variants;" | tail -n 1)
-POST_UPLOAD_FILES=$(find /opt/lampp/htdocs/shopwise-platform/public/uploads -type f ! -name ".gitkeep" 2>/dev/null | wc -l)
+POST_UPLOAD_FILES=$(find "$APP_ROOT/public/uploads" -type f ! -name ".gitkeep" 2>/dev/null | wc -l)
 
 echo "Post-Test Resource Baseline Comparison:"
 printf "  %-24s | %-12s | %-12s | %-8s\n" "Resource" "Baseline" "Post-Test" "Status"

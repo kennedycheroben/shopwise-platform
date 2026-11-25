@@ -355,10 +355,19 @@ final class GoogleAuthService
         $aud = $payload['aud'] ?? null;
         $clientId = self::getClientId();
         $audiences = is_array($aud) ? $aud : [$aud];
+        if ($aud === null || $audiences === [] || count(array_filter($audiences, 'is_string')) !== count($audiences)) {
+            throw new RuntimeException('Invalid audience claim.');
+        }
         if (!in_array($clientId, $audiences, true)) {
             throw new RuntimeException('Audience mismatch.');
         }
-        if (is_array($aud) && !empty($payload['azp']) && $payload['azp'] !== $clientId) {
+        // Google includes azp when an ID token has more than one audience.
+        // Requiring it here prevents another audience from being treated as
+        // the authorized OAuth client.
+        if (count($audiences) > 1 && ($payload['azp'] ?? null) !== $clientId) {
+            throw new RuntimeException('Authorized-party mismatch.');
+        }
+        if (!empty($payload['azp']) && $payload['azp'] !== $clientId) {
             throw new RuntimeException('Authorized-party mismatch.');
         }
 
@@ -614,7 +623,7 @@ final class GoogleAuthService
             try {
                 $pdo->beginTransaction();
                 $lockStmt = $pdo->prepare("
-                    SELECT role, status, email_verified_at, google_id
+                    SELECT email, role, status, email_verified_at, google_id
                     FROM users
                     WHERE id = :id
                     LIMIT 1
@@ -624,6 +633,10 @@ final class GoogleAuthService
                 $lockedUser = $lockStmt->fetch(PDO::FETCH_ASSOC);
 
                 if (!$lockedUser ||
+                    !hash_equals(
+                        CustomerAuthService::normalizeEmail((string)$lockedUser['email']),
+                        $email
+                    ) ||
                     $lockedUser['role'] !== 'customer' ||
                     $lockedUser['status'] !== 'active' ||
                     (!empty($lockedUser['google_id']) && !hash_equals((string)$lockedUser['google_id'], $googleId))) {

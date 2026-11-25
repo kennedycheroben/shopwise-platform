@@ -246,14 +246,17 @@ h6 {
 
 .header .main-bar .logo .shopwise-logo {
     height: 46px;
-    max-width: 210px;
+    width: 210px;
+    object-fit: cover;
+    object-position: center 51%;
     margin-right: 0;
 }
 
 .shopwise-footer-logo {
     height: 38px;
-    width: auto;
-    max-width: 190px;
+    width: 190px;
+    object-fit: cover;
+    object-position: center 51%;
 }
 
 .header .main-bar .logo h1 {

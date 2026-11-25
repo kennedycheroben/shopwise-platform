@@ -868,16 +868,20 @@ class TestGoogleHttpClient implements HttpClientInterface
     private ?string $idToken = null;
 
     public function __construct(array $jwks) {
-        $this->jwks = $jwks;
+        $this->jwks = isset($jwks['kty']) ? [$jwks] : $jwks;
     }
 
     public function setIdToken(string $token): void {
         $this->idToken = $token;
     }
 
+    public function setJwks(array $jwks): void {
+        $this->jwks = $jwks;
+    }
+
     public function get(string $url, array $headers = []): array {
         if (str_contains($url, 'jwks') || str_contains($url, 'certs')) {
-            return ['status' => 200, 'body' => json_encode(['keys' => [$this->jwks]]), 'headers' => []];
+            return ['status' => 200, 'body' => json_encode(['keys' => $this->jwks]), 'headers' => []];
         }
         return ['status' => 404, 'body' => '', 'headers' => []];
     }
@@ -946,6 +950,46 @@ try {
     $caughtAud = true;
 }
 $res['wrong_aud_rejected'] = $caughtAud;
+
+// 2b. Multiple audiences require the exact authorized party.
+$multiAudPayload = $basePayload;
+$multiAudPayload['aud'] = [GoogleAuthService::getClientId(), 'another-client-id'];
+$multiAudPayload['azp'] = 'wrong-client-id';
+$multiAudJwt = $signJwt($multiAudPayload, $resKey, $kid);
+$caughtMultiAzp = false;
+try {
+    GoogleAuthService::verifyIdToken($multiAudJwt, $nonce);
+} catch (Exception $ex) {
+    $caughtMultiAzp = true;
+}
+$res['multi_audience_wrong_azp_rejected'] = $caughtMultiAzp;
+
+$multiMissingAzpPayload = $multiAudPayload;
+unset($multiMissingAzpPayload['azp']);
+$multiMissingAzpJwt = $signJwt($multiMissingAzpPayload, $resKey, $kid);
+$caughtMissingAzp = false;
+try {
+    GoogleAuthService::verifyIdToken($multiMissingAzpJwt, $nonce);
+} catch (Exception $ex) {
+    $caughtMissingAzp = true;
+}
+$res['multi_audience_missing_azp_rejected'] = $caughtMissingAzp;
+
+$multiValidPayload = $multiAudPayload;
+$multiValidPayload['azp'] = GoogleAuthService::getClientId();
+$multiValidJwt = $signJwt($multiValidPayload, $resKey, $kid);
+$res['multi_audience_valid_azp_accepted'] = is_array(GoogleAuthService::verifyIdToken($multiValidJwt, $nonce));
+
+// 2c. A newly rotated Google signing key refreshes the cached JWKS once.
+$rotatedKid = 'rotated_' . $runId;
+$rotatedJwk = $jwk;
+$rotatedJwk['kid'] = $rotatedKid;
+$stubClient->setJwks([$rotatedJwk]);
+$rotatedPayload = $basePayload;
+$rotatedPayload['sub'] = 'rotated_sub_' . $runId;
+$rotatedJwt = $signJwt($rotatedPayload, $resKey, $rotatedKid);
+$res['rotated_key_accepted'] = is_array(GoogleAuthService::verifyIdToken($rotatedJwt, $nonce));
+$stubClient->setJwks([$jwk]);
 
 // 2c. Expired token rejected
 $expPayload = $basePayload;
@@ -1141,6 +1185,10 @@ assert_g_true() {
 assert_g_true "auth_url_has_pkce" "Google OAuth authorization URL enforces PKCE (S256) and state/nonce"
 assert_g_true "wrong_iss_rejected" "ID token validation strictly rejects invalid issuer"
 assert_g_true "wrong_aud_rejected" "ID token validation strictly rejects audience mismatch"
+assert_g_true "multi_audience_wrong_azp_rejected" "Multiple-audience token rejects an incorrect azp"
+assert_g_true "multi_audience_missing_azp_rejected" "Multiple-audience token rejects a missing azp"
+assert_g_true "multi_audience_valid_azp_accepted" "Multiple-audience token accepts the configured azp"
+assert_g_true "rotated_key_accepted" "JWKS refresh accepts a newly rotated Google signing key"
 assert_g_true "expired_token_rejected" "ID token validation strictly rejects expired tokens"
 assert_g_true "wrong_nonce_rejected" "ID token validation strictly rejects nonce mismatch"
 assert_g_true "unverified_email_rejected" "Google account with unverified email is strictly refused"
