@@ -8,8 +8,8 @@
   <meta name="robots" content="noindex, nofollow">
 
   <!-- Favicons -->
-  <link href="<?= e(asset('admin/assets/img/favicon.png')) ?>" rel="icon">
-  <link href="<?= e(asset('admin/assets/img/apple-touch-icon.png')) ?>" rel="apple-touch-icon">
+  <link href="<?= e(asset('assets/brand/shopwise-platform-mark.svg')) ?>" rel="icon" type="image/svg+xml">
+  <link href="<?= e(asset('assets/brand/shopwise-platform-mark.svg')) ?>" rel="apple-touch-icon">
 
   <!-- Google Fonts - Plus Jakarta Sans + JetBrains Mono -->
   <link rel="preconnect" href="https://fonts.googleapis.com">

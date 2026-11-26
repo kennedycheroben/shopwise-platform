@@ -34,8 +34,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   <meta name="description" content="ShopWise Kenya Admin Password Reset">
 
   <!-- Favicons -->
-  <link href="<?= e(asset('admin/assets/img/favicon.png')) ?>" rel="icon">
-  <link href="<?= e(asset('admin/assets/img/apple-touch-icon.png')) ?>" rel="apple-touch-icon">
+  <link href="<?= e(asset('assets/brand/shopwise-platform-mark.svg')) ?>" rel="icon" type="image/svg+xml">
+  <link href="<?= e(asset('assets/brand/shopwise-platform-mark.svg')) ?>" rel="apple-touch-icon">
 
   <!-- Google Fonts - Plus Jakarta Sans + JetBrains Mono -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -60,7 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <div class="auth-brand">
       <div class="auth-brand-inner">
         <a href="<?= e(url('admin/login.php')) ?>" class="auth-brand-logo">
-          <img src="<?= e(asset('admin/assets/img/logo.webp')) ?>" alt="ShopWise Kenya">
+          <img src="<?= e(asset('assets/brand/shopwise-logo.png')) ?>" alt="ShopWise Kenya">
           <span>ShopWise Kenya</span>
         </a>
         <div class="auth-brand-content">

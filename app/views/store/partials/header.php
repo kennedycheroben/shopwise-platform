@@ -47,8 +47,7 @@ $headerWishlistCount = $currentCustomer ? WishlistService::getCount((int)$curren
                 <!-- Logo -->
                 <div class="col-auto">
                     <a href="<?= e(url('/')) ?>" class="logo d-flex align-items-center text-decoration-none">
-                        <i class="bi bi-cart2 text-primary me-2" style="font-size: 1.8rem;"></i>
-                        <h1 class="sitename mb-0"><?= e(setting('store_name', 'ShopWise Kenya')) ?></h1>
+                        <img src="<?= e(asset('assets/brand/shopwise-logo.png')) ?>" alt="ShopWise" class="shopwise-logo">
                     </a>
                 </div>
 

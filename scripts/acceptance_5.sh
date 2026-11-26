@@ -18,6 +18,7 @@ set -uo pipefail
 
 BASE_URL="${BASE_URL:-http://127.0.0.1/shopwise-platform/public}"
 BASE_URL="${BASE_URL%/}"
+APP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 MYSQL_CMD="${MYSQL_CMD:-/opt/lampp/bin/mysql}"
 if [ ! -x "$MYSQL_CMD" ]; then
@@ -96,7 +97,7 @@ RAND_SUF=$(head /dev/urandom | tr -dc a-z0-9 | head -c 8)
 TEST_RUN_ID="p5_${RAND_SUF}"
 
 # Set up test mock storage files
-APP_STORAGE_DIR="/opt/lampp/htdocs/shopwise-platform/app/storage"
+APP_STORAGE_DIR="$APP_ROOT/app/storage"
 mkdir -p "$APP_STORAGE_DIR"
 MOCK_FILE="$APP_STORAGE_DIR/mpesa_mock_responses.json"
 MOCK_LOG="$APP_STORAGE_DIR/mpesa_mock_requests_cli.log"
@@ -286,12 +287,14 @@ trap cleanup EXIT
 # ==============================================================================
 info "SUBTEST (a): Routes, Guards, Access Control & IDOR Protection"
 
-# 1. Guest access to /checkout shows "Sign in to check out" gate
-HTTP_CODE=$(curl -s -o "$BODY_FILE" -w "%{http_code}" "$BASE_URL/checkout")
-if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 302 ]; then
-    pass "GET /checkout returns valid HTTP status ($HTTP_CODE)"
+# 1. Guest access to /checkout must redirect to authentication.
+CHECKOUT_HEADERS=$(curl -s -D - -o "$BODY_FILE" "$BASE_URL/checkout")
+HTTP_CODE=$(printf '%s\n' "$CHECKOUT_HEADERS" | awk 'toupper($1) ~ /^HTTP\// {code=$2} END {print code}')
+CHECKOUT_LOCATION=$(printf '%s\n' "$CHECKOUT_HEADERS" | awk 'tolower($1) == "location:" {$1=""; sub(/^ /, ""); print; exit}')
+if [ "$HTTP_CODE" -eq 302 ] && printf '%s' "$CHECKOUT_LOCATION" | grep -q 'login?next='; then
+    pass "Guest GET /checkout requires authentication and preserves the checkout return path"
 else
-    fail "GET /checkout unexpected status: $HTTP_CODE"
+    fail "Guest checkout authentication guard failed: HTTP $HTTP_CODE Location=$CHECKOUT_LOCATION"
 fi
 
 # 2. Check disabled notice when cart is empty
@@ -1559,7 +1562,7 @@ SEAM_INERT_RES=$(SHOPWISE_CONFIG=testing "$PHP_CMD" -r "
     \$res = [];
 
     // Storage directory check
-    \$storageDir = '/opt/lampp/htdocs/shopwise-platform/app/storage/payments';
+    \$storageDir = '$APP_ROOT/app/storage/payments';
     \$res['storage_dir_exists'] = is_dir(\$storageDir);
 
     // Seam isolation: In production or without testing mode, HttpClient injection is rejected

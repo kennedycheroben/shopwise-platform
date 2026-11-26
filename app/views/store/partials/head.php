@@ -15,7 +15,7 @@ $canonicalUrlFinal = $canonicalUrl ?? $defaultCanonical;
 $pageTitleFull = !empty($pageTitle) ? "{$pageTitle} - " . setting('store_name', 'ShopWise Kenya') : setting('store_name', 'ShopWise Kenya') . " - Everyday Essentials";
 $metaDescFull = $metaDescription ?? setting('store_tagline', 'Quality everyday essentials, delivered across Kenya');
 $ogTypeFinal = $ogType ?? 'website';
-$defaultOgImage = asset('assets/img/apple-touch-icon.png');
+$defaultOgImage = asset('assets/brand/shopwise-logo.png');
 $ogImageFinal = $ogImage ?? $defaultOgImage;
 ?>
     <title><?= e($pageTitleFull) ?></title>
@@ -48,7 +48,7 @@ $ogImageFinal = $ogImage ?? $defaultOgImage;
         '@type'    => 'Organization',
         'name'     => setting('store_name', 'ShopWise Kenya'),
         'url'      => url('/'),
-        'logo'     => asset('assets/img/logo.webp'),
+        'logo'     => asset('assets/brand/shopwise-logo.png'),
         'contactPoint' => [
             '@type'             => 'ContactPoint',
             'telephone'         => setting('support_phone', '+254 700 000 000'),
@@ -152,8 +152,8 @@ $ogImageFinal = $ogImage ?? $defaultOgImage;
     <?php endif; ?>
 
     <!-- Favicons -->
-    <link href="<?= e(asset('assets/img/favicon.png')) ?>" rel="icon">
-    <link href="<?= e(asset('assets/img/apple-touch-icon.png')) ?>" rel="apple-touch-icon">
+    <link href="<?= e(asset('assets/brand/shopwise-platform-mark.svg')) ?>" rel="icon" type="image/svg+xml">
+    <link href="<?= e(asset('assets/brand/shopwise-platform-mark.svg')) ?>" rel="apple-touch-icon">
 
     <!-- Fonts -->
     <link href="https://fonts.googleapis.com" rel="preconnect">

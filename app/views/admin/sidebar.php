@@ -13,7 +13,7 @@ $homeUrl = \App\Services\Permissions::can('dashboard.view') ? url('admin/') : ur
     <div class="sidebar-strip">
         <div class="sidebar-strip-logo">
             <a href="<?= e($homeUrl) ?>">
-                <img src="<?= e(asset('admin/assets/img/logo.webp')) ?>" alt="ShopWise Kenya">
+                <img src="<?= e(asset('assets/brand/shopwise-platform-mark.svg')) ?>" alt="ShopWise Kenya">
             </a>
         </div>
 
